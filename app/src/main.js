@@ -23,6 +23,9 @@ const { MODEL_PRESETS, shortLabel } = require('./conv/models');
 const ALLOWED_EXT = docRecent.DOC_EXT;
 const CODE_EXT = ['py', 'js', 'ts', 'tsx', 'jsx'];
 
+/* 应用图标：窗口标题栏 / 任务栏 / 桌面快捷方式都用它 */
+const APP_ICON = path.join(__dirname, '..', '..', 'assets', 'app-icon.ico');
+
 let win = null;
 
 /* ============================================================
@@ -396,6 +399,7 @@ function openEngineDialog() {
     show: false,
     title: '提炼引擎',
     backgroundColor: '#f4f6f9',
+    icon: APP_ICON,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -509,6 +513,7 @@ function openPicker(kind) {
     show: false,
     title: data.title,
     backgroundColor: '#eef1f5',
+    icon: APP_ICON,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -689,6 +694,7 @@ function createWindow() {
     minHeight: 560,
     backgroundColor: '#eef1f5',
     title: '双面板 · 共识文档工作台',
+    icon: APP_ICON,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
