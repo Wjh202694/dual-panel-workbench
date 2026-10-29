@@ -13,6 +13,21 @@ const CONCURRENCY = 3;
 /** 连续失败多少次就暂停（多半是额度用尽） */
 const MAX_CONSECUTIVE_FAILS = 3;
 
+/**
+ * 剥掉 Electron IPC 套在错误外面的那层壳：
+ * "Error invoking remote method 'conv:distill': Error: 引擎退出码 1"
+ * → "引擎退出码 1"
+ * 卡片上要给人看的是原因，不是这串框架噪音。
+ */
+function reasonText(err) {
+  const raw = (err && err.message ? err.message : String(err || ''))
+    .replace(/^Error invoking remote method '[^']*':\s*/i, '')
+    .replace(/^(Uncaught )?Error:\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return raw || '未知错误';
+}
+
 export function createConversations({ api, toaster, onLayout }) {
   const container = document.getElementById('ct-top');
   const placeholders = Array.from(container.querySelectorAll('.card'));
@@ -184,9 +199,14 @@ export function createConversations({ api, toaster, onLayout }) {
         toaster.show(`recap 已写入 ${nm}.recap.md`);
       }
     } catch (err) {
-      const msg = (err && err.message ? err.message : String(err)).replace(/\s+/g, ' ').slice(0, 160);
+      const msg = reasonText(err).slice(0, 160);
       for (const box of job.boxes) {
         renderState(box, '提炼失败：' + msg, 'err', () => {
+          // 手动点重试 = 用户明确要再试一次：必须解除熔断。
+          // 不解除的话作业只是进了队列、pump() 直接 return，
+          // 点了「重试」看着像没反应 —— 这就是"只响应一次"。
+          paused = false;
+          consecutiveFails = 0;
           enqueue({ path: logPath, name: logName, index, boxes: job.boxes });
         });
       }
@@ -285,7 +305,7 @@ export function createConversations({ api, toaster, onLayout }) {
     try {
       res = await api.pickConversations();
     } catch (err) {
-      toaster.show('打开文件框失败：' + (err.message || err), 'error');
+      toaster.show('打开文件框失败：' + reasonText(err), 'error');
       return;
     }
     if (!res || !res.logs || !res.logs.length) {

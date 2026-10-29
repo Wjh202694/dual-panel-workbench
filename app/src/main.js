@@ -317,6 +317,31 @@ ipcMain.handle('engine:open', async () => {
   return true;
 });
 
+/**
+ * 「测试连接」：用当前填的配置真跑一次引擎，把结果或原因给回设置窗口。
+ * 不保存任何东西 —— 只测。
+ */
+ipcMain.handle('engine:test', async (_e, patch) => {
+  const base = readSettings();
+  const cfg = { ...base, ...(patch || {}) };
+  if (!distill.ENGINES.some((e) => e.id === cfg.engine)) {
+    throw new Error('引擎不对');
+  }
+  cfg.model = String(cfg.model || '').trim();
+  cfg.customCommand = String(cfg.customCommand || '').trim();
+  cfg.apiBaseUrl = String(cfg.apiBaseUrl || '').trim();
+  cfg.apiKey = String(cfg.apiKey || '').trim();
+  cfg.apiFormat = cfg.apiFormat === 'anthropic' ? 'anthropic' : 'openai';
+  // 测试别等太久
+  cfg.timeoutMs = Math.min(Number(cfg.timeoutMs) || 60000, 60000);
+
+  const prompt = '这是一次连通性测试。只回复「收到」两个字，不要多说别的。';
+  const out = await distill.runEngine(cfg, prompt, { cwd: app.getPath('userData') });
+  const text = String(distill.extractText(cfg.engine, out) || '').trim();
+  if (!text) throw new Error('引擎跑通了，但没返回任何文本');
+  return { ok: true, sample: text.slice(0, 200) };
+});
+
 function broadcastEngine() {
   if (win && !win.isDestroyed()) win.webContents.send('engine:changed', readSettings());
 }
@@ -333,8 +358,13 @@ function openEngineDialog() {
   }
   dlgWin = new BrowserWindow({
     width: 520,
-    height: 440,
-    resizable: false,
+    // API 引擎那一档有 5 个字段（地址 / Key / 模型 / 接口格式 / 引擎），
+    // 全显示、三个字段同时报错、还带一行状态提示时内容约 576px；
+    // 窗口给到 640，一行都不用滚（窗口本身也可以拉大拉小）。
+    height: 640,
+    minWidth: 460,
+    minHeight: 360,
+    resizable: true,
     minimizable: false,
     maximizable: false,
     show: false,

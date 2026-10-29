@@ -13,14 +13,139 @@ const ENGINES = [
   { id: 'opencode', label: 'opencode（推荐 · 免费模型）', defaultModel: 'magpie/auto/beam-free' },
   { id: 'claude', label: 'Claude Code CLI', defaultModel: '' },
   { id: 'custom', label: '自定义命令（从 stdin 读提示词）', defaultModel: '' },
+  { id: 'api', label: 'API 调用（OpenAI 兼容 / Anthropic）', defaultModel: '' },
 ];
 
 const DEFAULT_SETTINGS = {
   engine: 'opencode',
   model: 'magpie/auto/beam-free',
   customCommand: '',
+  apiBaseUrl: '',
+  apiKey: '',
+  apiFormat: 'openai', // 'openai' | 'anthropic'
   timeoutMs: 180000,
 };
+
+/**
+ * 校验 API 配置。格式不对就抛人话错误，让卡片上能直接看到原因。
+ * @returns {{base:string, key:string, model:string, anthropic:boolean}}
+ */
+function validateApiConfig(cfg) {
+  const base = String(cfg.apiBaseUrl || '').trim();
+  if (!base) throw new Error('API 地址没填（去「工具 → 自定义模型与命令…」里填）');
+  let u;
+  try {
+    u = new URL(base);
+  } catch (_) {
+    throw new Error(`API 地址格式不对：「${base}」不是合法网址，要以 http:// 或 https:// 开头`);
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    throw new Error(`API 地址格式不对：只支持 http:// 或 https://，现在写的是 ${u.protocol}//`);
+  }
+  const key = String(cfg.apiKey || '').trim();
+  if (!key) throw new Error('API Key 没填');
+  const model = String(cfg.model || '').trim();
+  if (!model) throw new Error('模型名没填');
+  return { base: base.replace(/\/+$/, ''), key, model, anthropic: cfg.apiFormat === 'anthropic' };
+}
+
+/** 拼最终请求地址：容忍用户少写 /v1 或写全了路径 */
+function apiUrl(base, anthropic) {
+  const suffix = anthropic ? '/messages' : '/chat/completions';
+  const full = anthropic ? '/v1/messages' : '/v1/chat/completions';
+  if (base.endsWith(suffix)) return base;
+  if (base.endsWith('/v1')) return base + suffix;
+  return base + full;
+}
+
+/**
+ * 直接调 HTTP API 提炼。
+ * @returns {Promise<string>} 模型的纯文本回复
+ */
+async function runApi(cfg, prompt, opts = {}) {
+  const { base, key, model, anthropic } = validateApiConfig(cfg);
+  const url = apiUrl(base, anthropic);
+  const timeoutMs = cfg.timeoutMs || DEFAULT_SETTINGS.timeoutMs;
+
+  const headers = { 'content-type': 'application/json' };
+  let body;
+  if (anthropic) {
+    headers['x-api-key'] = key;
+    headers['anthropic-version'] = '2023-06-01';
+    body = {
+      model,
+      max_tokens: 4096,
+      messages: [{ role: 'user', content: prompt }],
+    };
+  } else {
+    headers['authorization'] = 'Bearer ' + key;
+    body = {
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      stream: false,
+    };
+  }
+
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+  } catch (err) {
+    clearTimeout(timer);
+    if (err && err.name === 'AbortError') {
+      throw new Error(`请求超时（${Math.round(timeoutMs / 1000)} 秒）：${url}`);
+    }
+    throw new Error(`连不上 ${url}：${(err && err.message) || err}`);
+  }
+  clearTimeout(timer);
+
+  const raw = await res.text();
+  if (!res.ok) {
+    const detail = raw.replace(/\s+/g, ' ').slice(0, 240);
+    throw new Error(`HTTP ${res.status}${res.statusText ? ' ' + res.statusText : ''}：${detail}`);
+  }
+
+  let j;
+  try {
+    j = JSON.parse(raw);
+  } catch (_) {
+    throw new Error('返回的不是 JSON（检查一下 API 地址填对了吗）：' + raw.replace(/\s+/g, ' ').slice(0, 200));
+  }
+  if (j && j.error) {
+    const e = j.error;
+    throw new Error('接口报错：' + (typeof e === 'string' ? e : e.message || JSON.stringify(e)));
+  }
+
+  const text = extractApiText(j, anthropic);
+  if (!text) {
+    throw new Error('返回里没找到文本内容：' + raw.replace(/\s+/g, ' ').slice(0, 200));
+  }
+  return text;
+}
+
+/** 从接口返回里挖出文本 */
+function extractApiText(j, anthropic) {
+  if (!j || typeof j !== 'object') return '';
+  if (anthropic) {
+    if (Array.isArray(j.content)) {
+      return j.content.map((c) => (c && typeof c.text === 'string' ? c.text : '')).filter(Boolean).join('\n');
+    }
+    if (typeof j.completion === 'string') return j.completion;
+    return '';
+  }
+  const ch = Array.isArray(j.choices) ? j.choices[0] : null;
+  if (!ch) return '';
+  if (ch.message && typeof ch.message.content === 'string') return ch.message.content;
+  if (typeof ch.text === 'string') return ch.text;
+  return '';
+}
+
 
 /** 根据引擎拼出命令行（提示词不进来，只走 stdin） */
 function buildCommand(cfg) {
@@ -29,6 +154,8 @@ function buildCommand(cfg) {
       return 'claude -p';
     case 'custom':
       return (cfg.customCommand || '').trim() || 'cat';
+    case 'api':
+      return ''; // API 引擎不走命令行
     case 'opencode':
     default:
       return `opencode run -m ${cfg.model || DEFAULT_SETTINGS.model} --format json`;
@@ -40,6 +167,9 @@ function buildCommand(cfg) {
  * @returns {Promise<string>}
  */
 function runEngine(cfg, prompt, opts = {}) {
+  // API 引擎直接发 HTTP，不起子进程
+  if (cfg.engine === 'api') return runApi(cfg, prompt, opts);
+
   const command = buildCommand(cfg);
   const timeoutMs = cfg.timeoutMs || DEFAULT_SETTINGS.timeoutMs;
   const cwd = opts.cwd || process.cwd();
@@ -198,6 +328,8 @@ module.exports = {
   DEFAULT_SETTINGS,
   buildCommand,
   runEngine,
+  runApi,
+  validateApiConfig,
   extractText,
   toBullets,
   buildPrompt,

@@ -2,6 +2,20 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 /**
+ * 剥掉 Electron IPC 套的那层壳：
+ * "Error invoking remote method 'engine:test': Error: API Key 没填"
+ * → "API Key 没填"
+ * 不然界面上显示出来的是一堆没用的前缀。
+ */
+function cleanIpcError(e) {
+  const msg = String((e && e.message) || e || '未知错误');
+  return msg
+    .replace(/^Error invoking remote method '[^']*':\s*/, '')
+    .replace(/^(Error|Uncaught \w+ Error):\s*/, '')
+    .trim();
+}
+
+/**
  * 渲染进程可用的能力（最小暴露面）
  */
 contextBridge.exposeInMainWorld('api', {
@@ -36,6 +50,11 @@ contextBridge.exposeInMainWorld('api', {
   listModels: () => ipcRenderer.invoke('conv:models'),
   openEngineDialog: () => ipcRenderer.invoke('engine:open'),
   onEngineChanged: (cb) => ipcRenderer.on('engine:changed', (_e, cfg) => cb(cfg)),
+
+  /* 「测试连接」：用当前填的配置跑一次引擎 */
+  testEngine: (patch) => ipcRenderer.invoke('engine:test', patch).catch((e) => {
+    throw new Error(cleanIpcError(e));
+  }),
 
   /* 提炼引擎设置窗口 */
   closeSelf: () => ipcRenderer.send('engine:close'),

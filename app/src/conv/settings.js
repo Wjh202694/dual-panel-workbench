@@ -30,6 +30,12 @@ function writeSettings(patch) {
     const preset = ENGINES.find((e) => e.id === next.engine);
     next.model = (preset && preset.defaultModel) || '';
   }
+  // 接口格式只认这两种
+  if (next.apiFormat !== 'anthropic') next.apiFormat = 'openai';
+  next.apiBaseUrl = String(next.apiBaseUrl || '').trim();
+  next.apiKey = String(next.apiKey || '').trim();
+  next.model = String(next.model || '').trim();
+  next.customCommand = String(next.customCommand || '').trim();
   try {
     fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
     fs.writeFileSync(settingsFile(), JSON.stringify(next, null, 2), 'utf8');

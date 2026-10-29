@@ -21,6 +21,13 @@ process.stdin.on('end', () => {
     /* 记不下来就算了，不影响产出 */
   }
 
+  // 自检里想模拟「引擎坏了」：同目录放一个 FAIL 文件，这个引擎就报错退出。
+  // 调用记录照留，自检才能数清「重试了几次引擎真的被叫了几次」。
+  if (fs.existsSync(path.join(__dirname, 'FAIL'))) {
+    process.stderr.write('假引擎：被标记为失败\n');
+    process.exit(1);
+  }
+
   const lines = input.split(/\r?\n/);
   // 从提示词里认出这一轮的第一条工具动作，好让断言能对上
   const idx = lines.findIndex((l) => l.includes('agent 这一轮执行的动作序列'));

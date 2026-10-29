@@ -9,11 +9,17 @@ const path = require('path');
 const os = require('os');
 const iconv = require('iconv-lite');
 
-const main = require('../src/main.js');
 const { writeFixture } = require('./fixture-log');
 
 const OUT = path.join(__dirname, 'out');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'docsmoke-'));
+
+// 自检的设置单独放一个目录：
+// 1) 不碰用户真实的 settings.json；
+// 2) 两个自检进程各跑各的，不会互相把引擎设置改掉。
+app.setPath('userData', path.join(TMP, 'userdata'));
+
+const main = require('../src/main.js');
 
 const MD = `# 项目共识文档
 
@@ -344,12 +350,77 @@ async function run(win) {
     engineCalls() - callsBeforeAgain === 1 && again.bullets >= 1,
     `多调了 ${engineCalls() - callsBeforeAgain} 次 · ${JSON.stringify(again)}`);
 
+  /* ---- 9d. 提炼失败后点「重试」要一直管用（不能只响应一次） ---- */
+  const failFlag = path.join(TMP, 'FAIL');
+  fs.writeFileSync(failFlag, '1', 'utf8');
+  try { fs.unlinkSync(path.join(TMP, 'demo-session.recap.md')); } catch (_) {}
+  const callsBeforeFail = engineCalls();
+  await win.webContents.executeJavaScript(`(() => {
+    document.querySelectorAll('.conv-group').forEach(g => g.remove());
+    return true;
+  })()`);
+  await win.webContents.executeJavaScript(
+    `window.__app.conversations.openLogByPath(${JSON.stringify(logPath)}).then(() => true)`
+  );
+  await delay(6000);
+  const failState = await win.webContents.executeJavaScript(`(() => ({
+    errs: document.querySelectorAll('.conv-recap__state--err').length,
+    retries: document.querySelectorAll('.conv-recap__retry').length,
+    errText: (document.querySelector('.conv-recap__state--err') || {}).textContent || '',
+  }))()`);
+  check('引擎失败时卡片显示原因和「重试」按钮',
+    failState.errs === 3 && failState.retries === 3, JSON.stringify(failState));
+  check('失败原因写清楚了（不是空白，也没有 Electron 的框架噪音）',
+    failState.errText.length > 0 && failState.errText.indexOf('Error invoking') < 0,
+    JSON.stringify(failState));
+
+  // 连续 3 次失败已经触发熔断，此时点「重试」必须还能把引擎叫起来
+  const callsBeforeRetry = engineCalls();
+  const retryInfo = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const clicked = [];
+    for (let i = 0; i < 3; i++) {
+      const btn = document.querySelector('.conv-recap__retry');
+      if (!btn) { clicked.push(false); break; }
+      btn.click();
+      clicked.push(true);
+      await sleep(3500);
+    }
+    return {
+      clicked,
+      errs: document.querySelectorAll('.conv-recap__state--err').length,
+    };
+  })()`);
+  const retryCalls = engineCalls() - callsBeforeRetry;
+  check('熔断之后点「重试」引擎还是会被再叫起来',
+    retryInfo.clicked.length === 3 && retryInfo.clicked.every(Boolean) && retryCalls === 3,
+    `点了 ${retryInfo.clicked.filter(Boolean).length} 次 · 引擎被叫 ${retryCalls} 次 · ${JSON.stringify(retryInfo)}`);
+
+  // 修好引擎后再点一次重试 → 应该真的出结果
+  fs.unlinkSync(failFlag);
+  const fixed = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const btn = document.querySelector('.conv-recap__retry');
+    if (!btn) return { noBtn: true };
+    btn.click();
+    await sleep(5000);
+    return {
+      errs: document.querySelectorAll('.conv-recap__state--err').length,
+      bullets: document.querySelectorAll('.conv-recap li').length,
+    };
+  })()`);
+  check('引擎修好后点「重试」能拿到结果',
+    fixed.bullets >= 1 && fixed.errs < 3, JSON.stringify(fixed));
+
   // 还原提炼引擎设置与「最近导入」清单（别把临时文件留在用户真实设置里）
   await win.webContents.executeJavaScript(
     `window.api.setEngineSettings(${JSON.stringify({
       engine: origSettings.engine,
       model: origSettings.model,
       customCommand: origSettings.customCommand,
+      apiBaseUrl: origSettings.apiBaseUrl || '',
+      apiKey: origSettings.apiKey || '',
+      apiFormat: origSettings.apiFormat || 'openai',
       recentDocs: origSettings.recentDocs || [],
     })}).then(() => true)`
   );
@@ -365,13 +436,107 @@ async function run(win) {
       options: document.querySelectorAll('#engine option').length,
       model: document.getElementById('model').value,
       cmd: document.getElementById('cmd').value,
+      engines: Array.from(document.querySelectorAll('#engine option')).map(o => o.value),
+      hasTestBtn: !!document.getElementById('test'),
+      hasSaveBtn: !!document.getElementById('save'),
     }))()`);
-    dlg.close();
   }
-  check('提炼引擎设置窗口能打开、列出 3 个引擎',
-    !!dlgInfo && dlgInfo.options === 3 && dlgInfo.title === '提炼引擎',
+  check('提炼引擎设置窗口能打开、列出 4 个引擎',
+    !!dlgInfo && dlgInfo.options === 4 && dlgInfo.title === '提炼引擎',
     JSON.stringify(dlgInfo));
   check('设置窗口带回当前模型', !!dlgInfo && !!dlgInfo.model, JSON.stringify(dlgInfo));
+  check('引擎清单里有「API 调用」这一档',
+    !!dlgInfo && dlgInfo.engines.indexOf('api') >= 0, JSON.stringify(dlgInfo && dlgInfo.engines));
+  check('设置窗口有「测试连接」和「保存」两个按钮',
+    !!dlgInfo && dlgInfo.hasTestBtn === true && dlgInfo.hasSaveBtn === true, JSON.stringify(dlgInfo));
+
+  /* 字段跟着引擎走：选 API 才显示地址/Key，选 opencode 就藏起来 */
+  let visInfo = null;
+  if (dlg) {
+    visInfo = await dlg.webContents.executeJavaScript(`(async () => {
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+      const sel = document.getElementById('engine');
+      const shown = (id) => {
+        const box = document.querySelector('.field[data-field="' + id + '"]');
+        return !!box && !box.hidden;
+      };
+      sel.value = 'api';
+      sel.dispatchEvent(new Event('change'));
+      await sleep(60);
+      const apiOn = { url: shown('apiBaseUrl'), key: shown('apiKey') };
+      sel.value = 'opencode';
+      sel.dispatchEvent(new Event('change'));
+      await sleep(60);
+      const ocOn = { url: shown('apiBaseUrl'), key: shown('apiKey') };
+      return { apiOn, ocOn };
+    })()`);
+  }
+  check('选了 API 引擎才显示地址和 Key',
+    !!visInfo && visInfo.apiOn.url === true && visInfo.apiOn.key === true, JSON.stringify(visInfo));
+  check('切回 opencode 就把 API 字段藏起来',
+    !!visInfo && visInfo.ocOn.url === false && visInfo.ocOn.key === false, JSON.stringify(visInfo));
+
+  /* 填错了要有明确回应：地址协议不对 / Key 空 / 模型名空 → 各自红色报错 */
+  let badInfo = null;
+  if (dlg) {
+    badInfo = await dlg.webContents.executeJavaScript(`(async () => {
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+      const sel = document.getElementById('engine');
+      sel.value = 'api';
+      sel.dispatchEvent(new Event('change'));
+      await sleep(60);
+      const set = (id, v) => {
+        const el = document.getElementById(id);
+        el.value = v;
+        el.dispatchEvent(new Event('input'));
+      };
+      set('apiBaseUrl', 'ftp://example.com');
+      set('apiKey', '');
+      set('model', '');
+      document.getElementById('save').click();
+      await sleep(400);
+      const err = document.getElementById('err-apiBaseUrl');
+      const errKey = document.getElementById('err-apiKey');
+      const errModel = document.getElementById('err-model');
+      return {
+        urlErr: (err && err.textContent) || '',
+        urlErrOn: !!(err && err.classList.contains('on')),
+        keyErrOn: !!(errKey && errKey.classList.contains('on')),
+        modelErrOn: !!(errModel && errModel.classList.contains('on')),
+      };
+    })()`);
+  }
+  check('地址填错时在字段下面给出红色报错',
+    !!badInfo && badInfo.urlErrOn === true && /http/i.test(badInfo.urlErr), JSON.stringify(badInfo));
+  check('Key / 模型名没填也分别报错',
+    !!badInfo && badInfo.keyErrOn === true && badInfo.modelErrOn === true, JSON.stringify(badInfo));
+
+  const afterBad = await win.webContents.executeJavaScript(`window.api.getEngineSettings()`);
+  const notSaved =
+    !!afterBad && afterBad.engine !== 'api' && afterBad.apiBaseUrl !== 'ftp://example.com';
+  check('填错时不会把错配置存下去', notSaved,
+    JSON.stringify(afterBad && { engine: afterBad.engine, apiBaseUrl: afterBad.apiBaseUrl }));
+
+  /* 「测试连接」也得有回应，不能点了没动静 */
+  let testInfo = null;
+  if (dlg) {
+    testInfo = await dlg.webContents.executeJavaScript(`(async () => {
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+      document.getElementById('test').click();
+      await sleep(1500);
+      const s = document.getElementById('status');
+      return {
+        text: (s.textContent || '').trim(),
+        on: s.classList.contains('on'),
+        isErr: s.classList.contains('err'),
+      };
+    })()`);
+  }
+  check('「测试连接」失败时给出原因，不是没反应',
+    !!testInfo && testInfo.on === true && testInfo.isErr === true && testInfo.text.length > 0,
+    JSON.stringify(testInfo));
+
+  if (dlg) dlg.close();
 
   /* ---- 11. 列表选择器：导入对话 / 导入文档都先给一份有名字的清单 ---- */
   main.openPicker('conv');
@@ -776,6 +941,90 @@ async function run(win) {
   check('切换后清单里只有一个是选中态',
     switched.checkedNow === 1, JSON.stringify(switched));
 
+  /* ---- 16. API 调用引擎：对着本地假服务器跑通整条链 ---- */
+  const http = require('http');
+  const apiHits = [];
+  const apiServer = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (d) => (raw += d));
+    req.on('end', () => {
+      let parsed = null;
+      try { parsed = JSON.parse(raw || '{}'); } catch (_) {}
+      apiHits.push({ url: req.url, auth: req.headers['authorization'], apiKey: req.headers['x-api-key'], body: parsed });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({
+        choices: [{ message: { content: '- API 引擎产出：读了提示词\n- API 引擎产出：调用了三次工具' } }],
+      }));
+    });
+  });
+  await new Promise((r) => apiServer.listen(0, '127.0.0.1', r));
+  const apiPort = apiServer.address().port;
+  const apiBase = `http://127.0.0.1:${apiPort}/v1`;
+
+  const apiCfg = { engine: 'api', model: 'my-model', apiBaseUrl: apiBase, apiKey: 'sk-test-key', apiFormat: 'openai' };
+
+  const apiTest = await win.webContents.executeJavaScript(
+    `window.api.testEngine(${JSON.stringify(apiCfg)})
+       .then(r => JSON.stringify(r)).catch(e => 'ERR:' + (e && e.message))`
+  );
+  check('API 引擎能真的调通（对着本地假服务器）',
+    apiTest.indexOf('"ok":true') > 0 && apiTest.indexOf('API 引擎产出') > 0, apiTest);
+  check('API 请求发到了正确的地址、带上了 Key 和模型名',
+    apiHits.length === 1 &&
+      apiHits[0].url === '/v1/chat/completions' &&
+      apiHits[0].auth === 'Bearer sk-test-key' &&
+      apiHits[0].body && apiHits[0].body.model === 'my-model',
+    JSON.stringify(apiHits[0] || {}));
+
+  // 格式不对时必须有明确的响应，不能闷声失败
+  const badUrl = await win.webContents.executeJavaScript(
+    `window.api.testEngine(${JSON.stringify({ ...apiCfg, apiBaseUrl: '不是网址' })})
+       .then(() => 'NO_ERROR').catch(e => (e && e.message) || 'ERR')`
+  );
+  check('API 地址格式不对时给出明确原因',
+    /格式不对|不是合法网址/.test(badUrl), badUrl);
+
+  const noKey = await win.webContents.executeJavaScript(
+    `window.api.testEngine(${JSON.stringify({ ...apiCfg, apiKey: '' })})
+       .then(() => 'NO_ERROR').catch(e => (e && e.message) || 'ERR')`
+  );
+  check('API Key 没填时给出明确原因', /Key/.test(noKey), noKey);
+
+  const badProto = await win.webContents.executeJavaScript(
+    `window.api.testEngine(${JSON.stringify({ ...apiCfg, apiBaseUrl: 'ftp://example.com/v1' })})
+       .then(() => 'NO_ERROR').catch(e => (e && e.message) || 'ERR')`
+  );
+  check('API 地址协议不对时给出明确原因', /格式不对|http/.test(badProto), badProto);
+
+  // 用 API 引擎真跑一轮提炼，验证整条链（不只是测试连接）
+  apiHits.length = 0;
+  await win.webContents.executeJavaScript(
+    `window.api.setEngineSettings(${JSON.stringify(apiCfg)}).then(() => true)`
+  );
+  await win.webContents.executeJavaScript(`(() => {
+    document.querySelectorAll('.conv-group').forEach(g => g.remove());
+    return true;
+  })()`);
+  try { fs.unlinkSync(path.join(TMP, 'demo-session.recap.md')); } catch (_) {}
+  await win.webContents.executeJavaScript(
+    `window.__app.conversations.openLogByPath(${JSON.stringify(logPath)}).then(() => true)`
+  );
+  await delay(8000);
+  const apiRecap = await win.webContents.executeJavaScript(`(() => ({
+    bullets: Array.from(document.querySelectorAll('.conv-card')).map(
+      c => Array.from(c.querySelectorAll('.conv-recap li')).map(li => li.textContent)),
+    errs: Array.from(document.querySelectorAll('.conv-recap__state--err')).map(e => e.textContent),
+  }))()`);
+  check('API 引擎能跑完整条提炼链（决策不变、recap 来自 API）',
+    apiRecap.bullets.length === 3 &&
+      apiRecap.bullets.every((b) => b.length >= 1 && b[0].indexOf('API 引擎产出') === 0) &&
+      apiRecap.errs.length === 0,
+    JSON.stringify(apiRecap));
+  check('API 引擎按轮次各调一次（3 轮 = 3 次请求）',
+    apiHits.length === 3, `hits=${apiHits.length}`);
+
+  apiServer.close();
+
   // 收尾：关掉文档、还原设置
   await win.webContents.executeJavaScript('window.__app.workspace.closeDoc()');
   await delay(300);
@@ -784,6 +1033,9 @@ async function run(win) {
       engine: settingsBefore.engine,
       model: settingsBefore.model,
       customCommand: settingsBefore.customCommand,
+      apiBaseUrl: settingsBefore.apiBaseUrl || '',
+      apiKey: settingsBefore.apiKey || '',
+      apiFormat: settingsBefore.apiFormat || 'openai',
       recentDocs: settingsBefore.recentDocs || [],
     })}).then(() => true)`
   );

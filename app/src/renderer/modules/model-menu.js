@@ -26,6 +26,8 @@ export function createModelMenu({ api, toaster, els }) {
 
   function currentLabel() {
     if (!cfg) return '…';
+    // API 引擎用的是自己填的模型，显示那个名字
+    if (cfg.engine === 'api') return cfg.model || 'API 自定义';
     if (cfg.engine !== 'opencode') {
       return ENGINE_LABEL[cfg.engine] || cfg.engine;
     }
@@ -43,6 +45,15 @@ export function createModelMenu({ api, toaster, els }) {
 
   function paintList() {
     list.textContent = '';
+    // 当前用的是 API 调用引擎时，先说清楚下面这些预设是 opencode 的
+    if (cfg && cfg.engine === 'api') {
+      const hint = document.createElement('div');
+      hint.className = 'modelmenu__hint';
+      hint.textContent =
+        '当前是 API 调用引擎，模型名在「引擎设置」里改。' +
+        '下面选的是 opencode 的免费模型，选了会切回 opencode。';
+      list.appendChild(hint);
+    }
     for (const p of presets) {
       const item = document.createElement('button');
       item.type = 'button';

@@ -12,7 +12,8 @@
     color: #1b2430;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     font-size: 13px;
-    display: flex; align-items: center; justify-content: center;
+    display: flex; align-items: flex-start; justify-content: center;
+    overflow-y: auto;
     padding: 22px;
   }
   .dlg {
@@ -47,26 +48,92 @@
   button:hover { background: #eef3f2; border-color: rgba(47, 125, 111, .4); color: #2f7d6f; }
   button.primary { background: #2f7d6f; border-color: #2f7d6f; color: #fff; }
   button.primary:hover { background: #27695d; color: #fff; }
+  button[disabled] { opacity: .55; cursor: default; }
+
+  /* 字段块：label + 输入 + 错误区 */
+  .field[hidden] { display: none; }
+  .labelrow { display: flex; align-items: baseline; justify-content: space-between; }
+  .labelrow label { margin-bottom: 5px; }
+  .ghost {
+    font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 6px;
+    background: transparent; border: 1px solid rgba(27, 36, 48, .14); color: #8a94a3;
+  }
+  .ghost:hover { background: #f7f9fb; border-color: rgba(47, 125, 111, .4); color: #2f7d6f; }
+  .err {
+    display: none;
+    margin-top: 5px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: #c0392b;
+  }
+  .err.on { display: block; }
+  .status {
+    margin-top: 12px;
+    font-size: 12.5px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-word;
+    display: none;
+  }
+  .status.on { display: block; }
+  .status.ok { color: #2f7d6f; }
+  .status.err { color: #c0392b; }
 </style>
 </head>
 <body>
   <div class="dlg">
     <h1>提炼引擎</h1>
 
-    <label for="engine">引擎</label>
-    <select id="engine"></select>
+    <div class="field" data-field="engine">
+      <label for="engine">引擎</label>
+      <select id="engine"></select>
+      <div class="err" id="err-engine"></div>
+    </div>
 
-    <label for="model">模型</label>
-    <input id="model" type="text" spellcheck="false" autocomplete="off">
+    <div class="field" data-field="model">
+      <label for="model">模型</label>
+      <input id="model" type="text" spellcheck="false" autocomplete="off">
+      <div class="err" id="err-model"></div>
+    </div>
 
-    <label for="cmd">自定义命令（引擎选「自定义命令」时生效）</label>
-    <input id="cmd" type="text" spellcheck="false" autocomplete="off">
-    <div class="hint">提示词一律从 stdin 送进命令，stdout 就是要点。默认引擎用 opencode 的免费模型。</div>
+    <div class="field" data-field="customCommand">
+      <label for="cmd">自定义命令</label>
+      <input id="cmd" type="text" spellcheck="false" autocomplete="off">
+      <div class="hint">提示词一律从 stdin 送进命令，stdout 就是要点。</div>
+      <div class="err" id="err-cmd"></div>
+    </div>
+
+    <div class="field" data-field="apiBaseUrl">
+      <label for="apiBaseUrl">API 地址</label>
+      <input id="apiBaseUrl" type="text" spellcheck="false" autocomplete="off" placeholder="https://api.example.com/v1">
+      <div class="err" id="err-apiBaseUrl"></div>
+    </div>
+
+    <div class="field" data-field="apiKey">
+      <div class="labelrow">
+        <label for="apiKey">API Key</label>
+        <button type="button" class="ghost" id="toggle-key">显示</button>
+      </div>
+      <input id="apiKey" type="password" spellcheck="false" autocomplete="off">
+      <div class="err" id="err-apiKey"></div>
+    </div>
+
+    <div class="field" data-field="apiFormat">
+      <label for="apiFormat">接口格式</label>
+      <select id="apiFormat">
+        <option value="openai">OpenAI 兼容</option>
+        <option value="anthropic">Anthropic</option>
+      </select>
+      <div class="err" id="err-apiFormat"></div>
+    </div>
 
     <div class="row">
       <button type="button" id="cancel">取消</button>
+      <button type="button" id="test">测试连接</button>
       <button type="button" id="save" class="primary">保存</button>
     </div>
+
+    <div class="status" id="status"></div>
   </div>
   <script src="engine-dialog.js"></script>
 </body>
