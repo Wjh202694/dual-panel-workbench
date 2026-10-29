@@ -111,6 +111,22 @@ createModelMenu({
   },
 });
 
+/* ---------------- 右上角：刷新对话（带出新增的轮次） ---------------- */
+const refreshBtn = $('btn-refresh');
+refreshBtn.addEventListener('click', async () => {
+  if (refreshBtn.disabled) return;
+  refreshBtn.disabled = true;
+  refreshBtn.classList.add('is-busy');
+  try {
+    await conversations.refresh();
+  } catch (err) {
+    toaster.show('刷新失败：' + ((err && err.message) || err), 'error');
+  } finally {
+    refreshBtn.disabled = false;
+    refreshBtn.classList.remove('is-busy');
+  }
+});
+
 /* ---------------- 菜单动作 ---------------- */
 window.api.onMenuAction((action) => {
   if (action === 'import-doc') window.api.openPicker('doc');

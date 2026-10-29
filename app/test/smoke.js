@@ -9,7 +9,7 @@ const path = require('path');
 const os = require('os');
 const iconv = require('iconv-lite');
 
-const { writeFixture } = require('./fixture-log');
+const { writeFixture, appendRounds } = require('./fixture-log');
 
 const OUT = path.join(__dirname, 'out');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'docsmoke-'));
@@ -412,6 +412,66 @@ async function run(win) {
   check('引擎修好后点「重试」能拿到结果',
     fixed.bullets >= 1 && fixed.errs < 3, JSON.stringify(fixed));
 
+  /* ---- 9e. 刷新：带出日志里新长出来的轮次，不用重新导入文件 ---- */
+  const beforeRefresh = await win.webContents.executeJavaScript(`(() => {
+    const m = document.getElementById('btn-model');
+    const r = document.getElementById('btn-refresh');
+    const rect = (el) => (el ? el.getBoundingClientRect() : null);
+    return {
+      cards: document.querySelectorAll('.conv-card').length,
+      hasBtn: !!r,
+      btnText: r ? (r.textContent || '').trim() : '',
+      hasIcon: !!(r && r.querySelector('svg')),
+      isRight: !!(m && r && rect(r).left >= rect(m).right - 1),
+    };
+  })()`);
+  check('右上角有刷新按键（在模型按键右边，只放图案没有文字）',
+    beforeRefresh.hasBtn === true &&
+      beforeRefresh.hasIcon === true &&
+      beforeRefresh.btnText === '' &&
+      beforeRefresh.isRight === true,
+    JSON.stringify(beforeRefresh));
+
+  // 往日志末尾追加 4 轮（模拟「对话还在继续，日志正在往下写」）
+  appendRounds(logPath, 4);
+  const callsBeforeRefresh = engineCalls();
+  const refreshed = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const res = await window.__app.conversations.refresh();
+    await sleep(4000);
+    return {
+      added: res.added,
+      cards: document.querySelectorAll('.conv-card').length,
+      pending: document.querySelectorAll('.conv-recap__state--pending').length,
+      lastRound: (document.querySelector('.conv-card:last-child .conv-card__round') || {}).textContent || '',
+    };
+  })()`);
+  check('刷新一次最多带出 3 轮新的（三个封顶）',
+    refreshed.added === 3 && refreshed.cards === beforeRefresh.cards + 3,
+    JSON.stringify(refreshed));
+  check('带出来的轮次会接着提炼',
+    engineCalls() - callsBeforeRefresh === 3 && refreshed.pending === 0,
+    `引擎被叫 ${engineCalls() - callsBeforeRefresh} 次 · ${JSON.stringify(refreshed)}`);
+
+  const refreshed2 = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const res = await window.__app.conversations.refresh();
+    await sleep(3000);
+    return { added: res.added, cards: document.querySelectorAll('.conv-card').length };
+  })()`);
+  check('再刷一次把剩下那轮带出来（不会重复旧的）',
+    refreshed2.added === 1 && refreshed2.cards === beforeRefresh.cards + 4,
+    JSON.stringify(refreshed2));
+
+  const refreshed3 = await win.webContents.executeJavaScript(
+    `window.__app.conversations.refresh()`
+  );
+  check('没有新轮次时如实说明（不是卡住）',
+    refreshed3 && refreshed3.added === 0, JSON.stringify(refreshed3));
+
+  // 把日志恢复成原来那 3 轮，后面的用例还要用它
+  writeFixture(logPath);
+
   // 还原提炼引擎设置与「最近导入」清单（别把临时文件留在用户真实设置里）
   await win.webContents.executeJavaScript(
     `window.api.setEngineSettings(${JSON.stringify({
@@ -551,6 +611,7 @@ async function run(win) {
       items: document.querySelectorAll('.item').length,
       firstTitle: (document.querySelector('.item__title') || {}).textContent || '',
       firstSub: (document.querySelector('.item__sub') || {}).textContent || '',
+      empty: (document.querySelector('.empty') || {}).textContent || '',
       browse: document.getElementById('browse').textContent,
     }))()`);
     check('选择器窗口自己不会莫名其妙关掉', !pk.isDestroyed(), `alive=${!pk.isDestroyed()}`);
@@ -561,13 +622,23 @@ async function run(win) {
     } catch (_) {}
     pk.close();
   }
-  check('导入对话的选择器能打开、列出最近对话',
-    !!pkInfo && pkInfo.title === '导入对话' && pkInfo.items > 0, JSON.stringify(pkInfo));
+  // 别人的机器上可能一个 Claude Code 会话都没有（没装 Claude Code）：
+  // 这时清单本来就该是空的，但要有引导文案、按钮还得在，不能崩。
+  const hasSessions = !!pkInfo && pkInfo.items > 0;
+  check('导入对话的选择器能打开（有会话就列出来，没会话就显示空态提示）',
+    !!pkInfo &&
+      pkInfo.title === '导入对话' &&
+      (hasSessions || (pkInfo.items === 0 && pkInfo.empty.length > 0)) &&
+      pkInfo.browse.length > 0,
+    JSON.stringify(pkInfo));
   check('选择器里给的是标题而不是 UUID 文件名',
-    !!pkInfo && pkInfo.firstTitle && !/^[0-9a-f-]{36}$/.test(pkInfo.firstTitle),
-    JSON.stringify(pkInfo && { firstTitle: pkInfo.firstTitle, firstSub: pkInfo.firstSub }));
+    !!pkInfo && (hasSessions
+      ? !!pkInfo.firstTitle && !/^[0-9a-f-]{36}$/.test(pkInfo.firstTitle)
+      : pkInfo.empty.length > 0),
+    JSON.stringify(pkInfo && { firstTitle: pkInfo.firstTitle, firstSub: pkInfo.firstSub, empty: pkInfo.empty }));
   check('选择器里带出项目路径（认得出是哪个项目）',
-    !!pkInfo && !!pkInfo.firstSub, JSON.stringify(pkInfo && { firstSub: pkInfo.firstSub }));
+    !!pkInfo && (hasSessions ? !!pkInfo.firstSub : pkInfo.empty.length > 0),
+    JSON.stringify(pkInfo && { firstSub: pkInfo.firstSub, empty: pkInfo.empty }));
 
   if (pk) {
     try {
@@ -586,14 +657,17 @@ async function run(win) {
       title: document.getElementById('title').textContent,
       groups: Array.from(document.querySelectorAll('.group__label')).map(e => e.textContent),
       items: document.querySelectorAll('.item').length,
+      empty: (document.querySelector('.empty') || {}).textContent || '',
       browse: document.getElementById('browse').textContent,
     }))()`);
     pk2.close();
   }
   check('导入文档的选择器能打开',
     !!docInfo && docInfo.title === '导入文档', JSON.stringify(docInfo));
-  check('文档清单按组列出（最近导入 / 项目文件夹）',
-    !!docInfo && docInfo.groups.length >= 1, JSON.stringify(docInfo));
+  // 干净机器上既没有「最近导入」也没有「项目文件夹」，这时该显示空态提示而不是报错
+  check('文档清单按组列出（没有可列的时显示空态提示）',
+    !!docInfo && (docInfo.groups.length >= 1 || (docInfo.items === 0 && docInfo.empty.length > 0)),
+    JSON.stringify(docInfo));
 
   /* ---- 13. 中文 txt 显示诊断（只用合成文件，绝不碰用户私人文件） ---- */
   const settingsBefore = await win.webContents.executeJavaScript('window.api.getEngineSettings()');

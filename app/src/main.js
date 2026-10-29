@@ -286,6 +286,19 @@ ipcMain.handle('conv:load', async (_e, filePath) => {
   return conv.loadConversation(filePath);
 });
 
+/**
+ * 刷新：日志文件导入之后还在往下写，这里只把「比已显示的更靠后的」轮次带出来。
+ * 一次最多带 3 轮（免得一口气把免费模型额度打爆），剩下的下一次刷新再带。
+ */
+const MAX_NEW_ROUNDS = 3;
+
+ipcMain.handle('conv:reload', async (_e, payload) => {
+  const { filePath, afterIndex, limit } = payload || {};
+  if (!filePath) throw new Error('缺少日志路径');
+  const n = Math.min(Math.max(Number(limit) || MAX_NEW_ROUNDS, 0), MAX_NEW_ROUNDS);
+  return conv.loadNewRounds(filePath, Number(afterIndex) || 0, n);
+});
+
 ipcMain.handle('conv:distill', async (_e, payload) => {
   const { filePath, index } = payload || {};
   if (!filePath) throw new Error('缺少日志路径');

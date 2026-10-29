@@ -13,6 +13,9 @@ const CONCURRENCY = 3;
 /** 连续失败多少次就暂停（多半是额度用尽） */
 const MAX_CONSECUTIVE_FAILS = 3;
 
+/** 一次刷新最多带出几轮新的（跟提炼并发数一致，剩下的下次再带） */
+const MAX_NEW_ROUNDS = 3;
+
 /**
  * 剥掉 Electron IPC 套在错误外面的那层壳：
  * "Error invoking remote method 'conv:distill': Error: 引擎退出码 1"
@@ -224,6 +227,30 @@ export function createConversations({ api, toaster, onLayout }) {
   }
 
   /* ---------------- 导入 ---------------- */
+
+  /**
+   * 把一轮做成卡片挂到某个分组上。
+   * 导入时用、刷新时也用（刷新带出来的新轮次走同一条路）。
+   */
+  function addRoundToGroup(g, round) {
+    const { card, box } = buildCard(round);
+    g.root.appendChild(card);
+    const entry = { card, box, round };
+    g.cards.set(round.index, entry);
+
+    if (round.bullets && round.bullets.length) {
+      // 有缓存：直接显示已保存的要点，并给一个「重新提炼」入口
+      renderBullets(box, round.bullets, makeAgainButton(g.path, g.name, round.index, box));
+    } else {
+      // 没提炼过的轮次给个手动按钮：额度紧的时候可以只提炼想看的几轮
+      renderState(box, '尚未提炼', 'idle', () => {
+        enqueue({ path: g.path, name: g.name, index: round.index, box });
+      }, '提炼这一轮');
+    }
+    if (round.index > g.lastIndex) g.lastIndex = round.index;
+    return entry;
+  }
+
   function addGroup(log) {
     const root = document.createElement('div');
     root.className = 'conv-group';
@@ -234,24 +261,12 @@ export function createConversations({ api, toaster, onLayout }) {
     root.appendChild(label);
 
     const cards = new Map();
+    const group = { path: log.path, name: log.name, root, cards, lastIndex: 0 };
     for (const round of log.rounds) {
-      const { card, box } = buildCard(round);
-      root.appendChild(card);
-      cards.set(round.index, { card, box, round });
-
-      if (round.bullets && round.bullets.length) {
-        // 有缓存：直接显示已保存的要点，并给一个「重新提炼」入口
-        renderBullets(box, round.bullets, makeAgainButton(log.path, log.name, round.index, box));
-      } else {
-        // 没提炼过的轮次给个手动按钮：额度紧的时候可以只提炼想看的几轮
-        renderState(box, '尚未提炼', 'idle', () => {
-          enqueue({ path: log.path, name: log.name, index: round.index, box });
-        }, '提炼这一轮');
-      }
+      addRoundToGroup(group, round);
     }
 
     container.appendChild(root);
-    const group = { path: log.path, name: log.name, root, cards };
     groups.push(group);
     return group;
   }
@@ -300,6 +315,54 @@ export function createConversations({ api, toaster, onLayout }) {
     return addLog(log);
   }
 
+  /**
+   * 刷新：把日志里新长出来的轮次带出来，不用重新导入文件。
+   *
+   * 日志文件（Claude Code 的 .jsonl）在导入之后还在往下追加，
+   * 所以「再导入一次」会多出一整组重复卡片 —— 刷新只补新轮次。
+   * 一次最多带 3 轮，剩下的下一次刷新再带。
+   */
+  async function refresh() {
+    if (!groups.length) {
+      toaster.show('还没导入对话，先点左上角「导入对话」', 'warn');
+      return { added: 0 };
+    }
+    let added = 0;
+    const seen = new Set(); // 同一轮导入过多次时，只算一轮
+    for (const g of groups.slice()) {
+      // 已经被从界面上摘掉的分组（比如换了文档、重新导入过）不用再管
+      if (!g.root.isConnected) continue;
+      let res;
+      try {
+        res = await api.reloadConversation(g.path, g.lastIndex, MAX_NEW_ROUNDS);
+      } catch (err) {
+        toaster.show('刷新失败：' + reasonText(err), 'error');
+        continue;
+      }
+      const fresh = (res && res.rounds) || [];
+      for (const round of fresh) {
+        // 已经在界面上的轮次不再重复加
+        if (g.cards.has(round.index)) continue;
+        const entry = addRoundToGroup(g, round);
+        // 新轮次跟刚导入时一样，直接排队提炼
+        enqueue({ path: g.path, name: g.name, index: round.index, box: entry.box });
+        const key = `${g.path}#${round.index}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          added++;
+        }
+      }
+    }
+    if (added) {
+      updateGroupLabels();
+      scrollToBottom();
+      toaster.show(`带出 ${added} 轮新对话，正在提炼`);
+    } else {
+      toaster.show('没有新的对话（日志还没长出新轮次）');
+    }
+    return { added };
+  }
+
   async function importConversations() {
     let res;
     try {
@@ -335,5 +398,5 @@ export function createConversations({ api, toaster, onLayout }) {
     return n;
   }
 
-  return { importConversations, openLogByPath, distillAll, groups };
+  return { importConversations, openLogByPath, refresh, distillAll, groups };
 }

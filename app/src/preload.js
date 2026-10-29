@@ -40,6 +40,9 @@ contextBridge.exposeInMainWorld('api', {
   /* 对话日志导入 */
   pickConversations: () => ipcRenderer.invoke('conv:pick'),
   loadConversation: (filePath) => ipcRenderer.invoke('conv:load', filePath),
+  /* 刷新：只带出日志里新增的轮次，不用重新导入文件 */
+  reloadConversation: (filePath, afterIndex, limit) =>
+    ipcRenderer.invoke('conv:reload', { filePath, afterIndex, limit }),
   distillRound: (filePath, index) => ipcRenderer.invoke('conv:distill', { filePath, index }),
   recapFile: (filePath) => ipcRenderer.invoke('conv:recap-file', filePath),
   getEngineSettings: () => ipcRenderer.invoke('conv:settings:get'),

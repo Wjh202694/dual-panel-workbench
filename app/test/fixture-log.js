@@ -133,4 +133,36 @@ function writeFixture(filePath) {
   return filePath;
 }
 
-module.exports = { FIXTURE, writeFixture };
+/**
+ * 往日志末尾追加 N 轮 —— 模拟「对话还在继续，日志文件正在往下写」。
+ * 自检用它验证刷新按钮：不用重新导入文件就能带出新轮次。
+ */
+function appendRounds(filePath, count) {
+  const fs = require('fs');
+  const lines = [];
+  for (let i = 1; i <= count; i++) {
+    lines.push(
+      JSON.stringify({
+        type: 'user',
+        origin: { kind: 'human' },
+        message: { role: 'user', content: `追加的第 ${i} 轮：继续往下做` },
+      })
+    );
+    lines.push(
+      JSON.stringify({
+        type: 'assistant',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'tool_use', id: `x${i}`, name: 'Read', input: { file_path: `src/extra-${i}.ts` } },
+            { type: 'text', text: `第 ${i} 轮做完了。` },
+          ],
+        },
+      })
+    );
+  }
+  fs.appendFileSync(filePath, lines.join('\n') + '\n', 'utf8');
+  return filePath;
+}
+
+module.exports = { FIXTURE, writeFixture, appendRounds };

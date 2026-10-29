@@ -1,0 +1,4 @@
+# .bat 必须是 CRLF，cmd 才不会把脚本解析乱
+# （文件本身是带 BOM 的 UTF-8，这样中文提示在中文 Windows 上不乱码）
+*.bat text eol=crlf
+*.sh text eol=lf
