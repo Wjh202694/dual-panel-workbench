@@ -59,7 +59,7 @@ async function run(win) {
   /* ---- 1. 界面与 Demo 一致：顶栏两个按钮、上方 8 张空白卡片、下方无任何 chrome ---- */
   const shell_ = await win.webContents.executeJavaScript(`(() => ({
     topbarButtons: document.querySelectorAll('.topbar__btn').length,
-    topbarIcons: document.querySelectorAll('.topbar img, .topbar svg, .topbar .avatar, .topbar .iconbtn').length,
+    modelButtons: document.querySelectorAll('.topbar__model').length,
     cards: document.querySelectorAll('#ct-top .card').length,
     tabStrip: document.querySelectorAll('.ws__tabs, .tab').length,
     toolbar: document.querySelectorAll('.ws__toolbar, #ws-toolbar').length,
@@ -70,8 +70,8 @@ async function run(win) {
     editorHidden: document.getElementById('editor').hidden,
     bottomText: document.getElementById('ct-bottom').innerText.trim(),
   }))()`);
-  check('顶栏只有两个导入按钮、无右上角图标',
-    shell_.topbarButtons === 2 && shell_.topbarIcons === 0, JSON.stringify(shell_));
+  check('顶栏两个导入按钮 + 右上角一个模型切换按键',
+    shell_.topbarButtons === 2 && shell_.modelButtons === 1, JSON.stringify(shell_));
   check('上方是 Demo 的 8 张空白卡片', shell_.cards === 8, JSON.stringify(shell_));
   check('无标签栏 / 工具栏 / 状态栏 / 保存胶囊',
     shell_.tabStrip === 0 && shell_.toolbar === 0 && shell_.footBar === 0 && shell_.savePill === 0,
