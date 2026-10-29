@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>导入对话 / 导入文档 · Demo</title>
+<style>
+  :root{
+    --phi: 1.618;
+    --bg: #eef1f5;
+    --ink: #1b2430;
+    --ink-2: #5a6675;
+    --ink-3: #8a94a3;
+    --line: rgba(27,36,48,.10);
+    --card: #ffffff;
+    --accent: #2f7d6f;
+    --thumb: rgba(27,36,48,.30);
+    --thumb-hover: rgba(47,125,111,.75);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    margin:0;
+    background:
+      radial-gradient(1200px 700px at 12% -10%, #ffffff 0%, rgba(255,255,255,0) 60%),
+      radial-gradient(900px 600px at 105% 110%, #dfe7ea 0%, rgba(223,231,234,0) 55%),
+      var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    display:flex; align-items:center; justify-content:center;
+    padding:28px 18px;
+    gap:26px;
+    flex-wrap:wrap;
+  }
+  .stage{display:flex; gap:26px; align-items:flex-start; flex-wrap:wrap; justify-content:center;}
+
+  /* ---------- 设备外壳 ---------- */
+  .phone{
+    width:420px;
+    background:#fff;
+    border-radius:38px;
+    padding:12px;
+    box-shadow:
+      0 1px 0 rgba(255,255,255,.9) inset,
+      0 30px 70px -22px rgba(27,36,48,.38),
+      0 8px 22px -12px rgba(27,36,48,.22);
+    border:1px solid rgba(27,36,48,.08);
+    position:relative;
+  }
+  .screen{
+    position:relative;
+    border-radius:28px;
+    overflow:hidden;
+    background:#f7f9fb;
+    display:flex;
+    flex-direction:column;
+    height:872px;
+    box-shadow:0 0 0 1px rgba(27,36,48,.07) inset;
+  }
+
+  /* ---------- 主体：内容区 + 右侧独立滚动栏 ---------- */
+  .body{
+    flex:1 1 auto;
+    min-height:0;
+    display:flex;
+    align-items:stretch;
+  }
+  .panels{
+    flex:1 1 auto;
+    min-width:0;
+    height:100%;
+    display:flex;
+    flex-direction:column;
+    min-height:0;
+  }
+  /* 右侧滚动栏：在内容框之外，与草图一致 */
+  .rail{
+    flex:0 0 34px;
+    width:34px;
+    height:100%;
+    display:flex;
+    flex-direction:column;
+    background:#eef1f4;
+    border-left:1px solid rgba(27,36,48,.09);
+    z-index:5;
+  }
+  .rail__seg{
+    position:relative;
+    display:flex;
+    justify-content:center;
+    padding:26px 0 10px;
+    touch-action:none;
+    cursor:pointer;
+  }
+  .rail__seg--top{ flex:var(--split-ratio, 1.618) 1 0; }
+  .rail__seg--bottom{ flex:1 1 0; }
+  .rail__split{
+    flex:0 0 auto;
+    height:14px;
+    background:linear-gradient(180deg,#eef1f5 0%,#e3e8ee 45%,#eef1f5 100%);
+    border-top:1px solid rgba(27,36,48,.09);
+    border-bottom:1px solid rgba(27,36,48,.09);
+  }
+
+  /* ---------- 顶栏 ---------- */
+  .topbar{
+    flex:0 0 auto;
+    display:flex; align-items:center; gap:10px;
+    padding:11px 16px;
+    background:#fff;
+    border-bottom:1px solid var(--line);
+    z-index:3;
+  }
+  .topbar__btn{
+    font:inherit;
+    font-size:12.5px;
+    font-weight:600;
+    color:var(--ink);
+    background:#f7f9fb;
+    border:1px solid rgba(27,36,48,.13);
+    border-radius:9px;
+    padding:8px 14px;
+    cursor:pointer;
+    white-space:nowrap;
+    transition:background .15s ease, border-color .15s ease, color .15s ease;
+  }
+  .topbar__btn:hover{
+    background:#eef3f2;
+    border-color:rgba(47,125,111,.40);
+    color:var(--accent);
+  }
+  .topbar__btn:active{ background:#e4ecea; }
+  .topbar__btn:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .topbar .spacer{flex:1;}
+  .topbar .avatar{
+    width:30px;height:30px;border-radius:50%;
+    background:#f2f5f8;
+    border:1px solid rgba(27,36,48,.10);
+    flex:none;
+  }
+
+  /* ---------- 分割线（可拖拽） ---------- */
+  .split{
+    flex:0 0 auto;
+    height:14px;
+    background:linear-gradient(180deg,#eef1f5 0%,#e3e8ee 45%,#eef1f5 100%);
+    border-top:1px solid rgba(27,36,48,.09);
+    border-bottom:1px solid rgba(27,36,48,.09);
+    position:relative; z-index:6;
+    cursor:ns-resize;
+    touch-action:none;
+    display:flex; align-items:center; justify-content:center;
+    user-select:none;
+  }
+  .split::before{
+    content:""; position:absolute; inset:-6px 0; /* 扩大热区 */
+  }
+  .split__grip{
+    position:relative; z-index:1;
+    width:46px;height:5px;border-radius:3px;
+    background:rgba(27,36,48,.18);
+    transition:background .16s ease, width .16s ease;
+    pointer-events:none;
+  }
+  .split:hover .split__grip,
+  .split.dragging .split__grip{ background:var(--accent); width:58px; }
+  .split.dragging{ background:linear-gradient(180deg,#e6ecea 0%,#dbe4e3 45%,#e6ecea 100%); }
+  .split:focus-visible{ outline:2px solid var(--accent); outline-offset:-2px; }
+  /* 分割比例提示 */
+  .split__ratio{
+    position:absolute; left:50%; top:50%;
+    transform:translate(-50%,-50%) translateY(20px);
+    font-size:10px; font-weight:700; color:#fff;
+    background:var(--accent);
+    padding:3px 8px;border-radius:99px;
+    font-variant-numeric:tabular-nums;
+    white-space:nowrap;
+    opacity:0; transition:opacity .16s ease;
+    pointer-events:none;
+    z-index:2;
+  }
+  .split:hover .split__ratio,
+  .split.dragging .split__ratio{ opacity:1; }
+
+  /* ---------- 面板通用 ---------- */
+  .panel{
+    position:relative;
+    min-height:0;
+    display:flex;
+    overflow:hidden;
+  }
+  /* 上：大   --split-ratio 由拖拽实时更新，默认 φ */
+  .panel--top{flex:var(--split-ratio, 1.618) 1 0; background:rgba(255,255,255,.42);}
+  /* 下：小 */
+  .panel--bottom{flex:1 1 0; background:rgba(255,255,255,.55);}
+
+  .viewport{
+    position:relative;
+    flex:1; min-width:0;
+    overflow-y:auto; overflow-x:hidden;
+    scrollbar-width:none;
+    -ms-overflow-style:none;
+    overscroll-behavior:contain;
+  }
+  .viewport::-webkit-scrollbar{display:none;}
+  .content{
+    padding:14px 16px 18px;
+  }
+  .panel--bottom .content{padding:14px 16px 20px;}
+  /* 纯空白内容区：无背景、无边框、无任何可见内容 */
+  .content--blank{
+    background:transparent;
+    border:none;
+    padding:0;
+  }
+
+  /* ---------- 滚动条（位于右侧独立栏） ---------- */
+  .track{
+    position:relative;
+    width:8px;
+    border-radius:99px;
+    background:rgba(27,36,48,.07);
+  }
+  .thumb{
+    position:absolute; left:0; right:0;
+    border-radius:99px;
+    background:var(--thumb);
+    cursor:grab;
+    transition:background .18s ease, width .18s ease;
+  }
+  .thumb:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .thumb:hover{background:var(--thumb-hover); width:11px; left:-1.5px;}
+  .thumb.dragging{cursor:grabbing; background:var(--thumb-hover); width:12px; left:-2px;}
+  .thumb::after{
+    content:""; position:absolute; inset:4px 1px; border-radius:99px;
+    background:rgba(255,255,255,.35);
+  }
+  /* 滚动数值标记（栏内顶部） */
+  .pct{
+    position:absolute; left:50%; top:6px;
+    transform:translateX(-50%);
+    font-size:9.5px; font-weight:700; color:var(--ink-3);
+    background:rgba(255,255,255,.9);
+    border:1px solid var(--line);
+    border-radius:5px; padding:1px 4px;
+    font-variant-numeric:tabular-nums;
+    pointer-events:none;
+    z-index:5;
+  }
+
+  /* ---------- 空白卡片（线框示意） ---------- */
+  .card{
+    background:var(--card);
+    border-radius:12px;
+    margin-bottom:12px;
+    height:72px;
+    box-shadow:0 6px 18px -12px rgba(27,36,48,.35), 0 1px 0 rgba(255,255,255,.7) inset;
+    border:1px solid rgba(27,36,48,.07);
+  }
+  .card--tall{ height:150px; }
+  .card--short{ height:64px; }
+
+  /* ---------- 空白信息块 ---------- */
+  .block{
+    background:rgba(255,255,255,.85);
+    border:1px solid rgba(27,36,48,.07);
+    border-radius:12px;
+    margin-bottom:10px;
+  }
+  .block--lg{ height:110px; }
+  .block--md{ height:64px; }
+  .block--sm{ height:38px; margin-bottom:8px; }
+
+  /* ---------- 说明卡 ---------- */
+  .notes{
+    width:300px;
+    background:rgba(255,255,255,.72);
+    border:1px solid rgba(27,36,48,.08);
+    border-radius:18px;
+    padding:18px 18px 16px;
+    box-shadow:0 18px 40px -26px rgba(27,36,48,.4);
+  }
+  .notes h3{margin:0 0 4px;font-size:15px;}
+  .notes .lead{margin:0 0 14px;font-size:12px;color:var(--ink-3);line-height:1.6;}
+  .notes ol{margin:0;padding-left:18px;font-size:12.5px;line-height:1.75;color:var(--ink-2);}
+  .notes ol b{color:var(--ink);}
+  .ratio{
+    margin-top:14px;padding:11px 12px;border-radius:12px;
+    background:linear-gradient(135deg,rgba(47,125,111,.10),rgba(47,125,111,.04));
+    border:1px solid rgba(47,125,111,.18);
+    font-size:11.5px;color:var(--ink-2);line-height:1.7;
+  }
+  .ratio b{color:var(--accent);font-variant-numeric:tabular-nums;}
+  .blanknote{
+    margin-top:12px;padding:11px 12px;border-radius:12px;
+    background:rgba(27,36,48,.04);
+    border:1px dashed rgba(27,36,48,.14);
+    font-size:11.5px;color:var(--ink-2);line-height:1.7;
+  }
+  .liblink{
+    display:inline-block;margin-top:12px;font-size:12px;font-weight:600;
+    color:var(--accent);text-decoration:none;
+    border-bottom:1px solid rgba(47,125,111,.35);padding-bottom:1px;
+  }
+  .liblink:hover{border-bottom-color:var(--accent);}
+
+  @media (max-width:820px){
+    .notes{width:420px;}
+    body{padding:16px 10px;}
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+
+  <!-- ============ 手机界面 ============ -->
+  <div class="phone">
+    <div class="screen">
+
+      <div class="topbar">
+        <button class="topbar__btn" type="button">导入对话</button>
+        <button class="topbar__btn" type="button">导入文档</button>
+        <div class="spacer"></div>
+        <div class="avatar"></div>
+      </div>
+
+      <div class="body">
+        <div class="panels">
+
+          <!-- ===== 上：大面板 ===== -->
+          <section class="panel panel--top">
+            <div class="viewport" id="vp-top">
+              <div class="content" id="ct-top">
+                <div class="card"></div>
+                <div class="card"></div>
+                <div class="card"></div>
+                <div class="card"></div>
+                <div class="card"></div>
+                <div class="card"></div>
+                <div class="card"></div>
+                <div class="card"></div>
+              </div>
+            </div>
+          </section>
+
+          <div class="split" id="split" role="separator" aria-orientation="horizontal"
+               aria-label="面板分割线，可拖动调整上下高度比" tabindex="0"
+               aria-valuemin="0.15" aria-valuemax="20" aria-valuenow="1.618">
+            <div class="split__grip"></div>
+            <div class="split__ratio" id="splitRatio">1.618 : 1</div>
+          </div>
+
+          <!-- ===== 下：小面板（完全空白） ===== -->
+          <section class="panel panel--bottom">
+            <div class="viewport" id="vp-bottom">
+              <div class="content content--blank" id="ct-bottom"></div>
+            </div>
+          </section>
+
+        </div>
+
+        <!-- ===== 右侧独立滚动栏 ===== -->
+        <div class="rail">
+          <div class="rail__seg rail__seg--top" id="sb-top">
+            <div class="pct" id="pct-top">0</div>
+            <div class="track"><div class="thumb" id="th-top" role="scrollbar" aria-orientation="vertical" aria-label="上方面板滚动条" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0"></div></div>
+          </div>
+          <div class="rail__split"></div>
+          <div class="rail__seg rail__seg--bottom" id="sb-bottom">
+            <div class="pct" id="pct-bottom">0</div>
+            <div class="track"><div class="thumb" id="th-bottom" role="scrollbar" aria-orientation="vertical" aria-label="下方面板滚动条" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0"></div></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============ 说明 ============ -->
+  <aside class="notes">
+    <h3>双区域滚动示意图</h3>
+    <p class="lead">上下两个区域各自独立滚动，中间分割线可自由拖动。</p>
+    <ol>
+      <li>拖动<b>中间分割线</b>，自由调整上下高度比（默认黄金分割 φ）。</li>
+      <li>拖动<b>上方面板右侧滑块</b>，内部小长方形（卡片）依次向下滚动。</li>
+      <li>下滑面板<b>右侧滑块</b>独立控制下方区域内容。</li>
+      <li>滑块支持鼠标拖拽、滚轮与触摸板。</li>
+      <li>右上角数字为该面板的滚动百分比。</li>
+    </ol>
+    <div class="ratio">
+      初始面积比例 <b>φ = 1.618</b><br>
+      上方面板 flex-grow = 1.618，下方面板 = 1，两面板等宽，因此高度比即面积比。<br>
+      拖动分割线后比例实时变化，双击可复位回 φ。
+    </div>
+    <div class="blanknote">
+      当前为<b>纯线框示意</b>：上方为空白小长方形列表，<b>下方区域完全空白</b>，不含图片与文字。已生成的图像素材保存在
+      <b>assets/</b>，供后续填充使用。
+    </div>
+    <a class="liblink" href="library.html" target="_blank">查看素材库 →</a>
+  </aside>
+
+</div>
+
+<script>
+(function(){
+  function initPanel(vpId, ctId, sbId, thId, pctId, opts){
+    opts = opts || {};
+    const vp = document.getElementById(vpId);
+    const ct = document.getElementById(ctId);
+    const sb = document.getElementById(sbId);
+    const th = document.getElementById(thId);
+    const pct = document.getElementById(pctId);
+    const track = th.parentElement;
+
+    let maxScroll = 0, thumbH = 0, dragging = false, startY = 0, startOffset = 0, lastDownAt = 0;
+
+    function metrics(){
+      const vh = vp.clientHeight;
+      // 空白面板：撑出高于视口的纯空白内容区，使滑块保持短滑块、仍可拖动
+      // （导入文档后内容已填充，不再需要固定高度）
+      if(opts.blank && !ct.dataset.filled){
+        ct.style.height = Math.max(vh * 1.9, vh + 120) + 'px';
+      }
+      const ch = ct.scrollHeight;
+      maxScroll = Math.max(0, ch - vh);
+      const trackH = track.clientHeight;
+      thumbH = maxScroll > 0 ? Math.max(28, trackH * (vh / ch)) : trackH;
+      th.style.height = thumbH + 'px';
+      layout();
+    }
+
+    function current(){
+      return vp.scrollTop;
+    }
+
+    function layout(){
+      const trackH = track.clientHeight;
+      const travel = Math.max(0, trackH - thumbH);
+      const ratio = maxScroll > 0 ? current() / maxScroll : 0;
+      th.style.top = (ratio * travel) + 'px';
+      const pctVal = Math.round(ratio * 100);
+      pct.textContent = pctVal;
+      th.setAttribute('aria-valuenow', pctVal);
+    }
+
+    function scrollTo(px){
+      vp.scrollTop = Math.max(0, Math.min(maxScroll, px));
+      layout();
+    }
+
+    /* --- 拖拽滑块 --- */
+    // 使用绝对位置换算，pointer 与 mouse 事件同时存在也不会重复累加
+    function beginDrag(clientY){
+      dragging = true;
+      startY = clientY;
+      startOffset = current();
+      th.classList.add('dragging');
+    }
+    function moveDrag(clientY){
+      if(!dragging) return;
+      const travel = Math.max(0, track.clientHeight - thumbH);
+      const dy = clientY - startY;
+      scrollTo(startOffset + (dy / travel) * maxScroll);
+    }
+    function endDrag(){
+      if(!dragging) return;
+      dragging = false;
+      th.classList.remove('dragging');
+    }
+    function onDown(e){
+      if(maxScroll <= 0) return;
+      // pointerdown 与 mousedown 会先后触发，用时间戳去重，避免重置拖拽基准
+      const now = e.timeStamp || Date.now();
+      if(now - lastDownAt < 50) return;
+      lastDownAt = now;
+
+      const rect = th.getBoundingClientRect();
+      const clientY = e.clientY;
+      const onThumb = clientY >= rect.top && clientY <= rect.bottom;
+      // 命中滑块（或滑块附近 16px 容差）-> 开始拖拽
+      if(onThumb || Math.abs(clientY - (rect.top + rect.height/2)) < 16){
+        beginDrag(clientY);
+        try{ sb.setPointerCapture(e.pointerId); }catch(_){}
+      }else{
+        // 点在轨道 -> 跳转到该位置
+        const trackRect = track.getBoundingClientRect();
+        const travel = Math.max(0, trackRect.height - thumbH);
+        const thumbTop = clientY - trackRect.top - thumbH / 2;
+        const r = Math.max(0, Math.min(1, thumbTop / travel));
+        scrollTo(r * maxScroll);
+      }
+      e.preventDefault();
+    }
+
+    sb.addEventListener('pointerdown', onDown);
+    sb.addEventListener('mousedown', onDown);
+    th.addEventListener('pointerdown', onDown);
+    th.addEventListener('mousedown', onDown);
+    document.addEventListener('pointermove', (e)=>{ moveDrag(e.clientY); }, {passive:true});
+    document.addEventListener('mousemove', (e)=>{ moveDrag(e.clientY); }, {passive:true});
+    document.addEventListener('pointerup', endDrag);
+    document.addEventListener('mouseup', endDrag);
+    document.addEventListener('pointercancel', endDrag);
+
+    vp.addEventListener('scroll', layout, {passive:true});
+
+    // 键盘操作滑块
+    th.addEventListener('keydown', (e)=>{
+      const step = 48;
+      if(e.key === 'ArrowDown' || e.key === 'ArrowRight'){ scrollTo(current() + step); e.preventDefault(); }
+      else if(e.key === 'ArrowUp' || e.key === 'ArrowLeft'){ scrollTo(current() - step); e.preventDefault(); }
+      else if(e.key === 'PageDown'){ scrollTo(current() + vp.clientHeight * 0.8); e.preventDefault(); }
+      else if(e.key === 'PageUp'){ scrollTo(current() - vp.clientHeight * 0.8); e.preventDefault(); }
+      else if(e.key === 'Home'){ scrollTo(0); e.preventDefault(); }
+      else if(e.key === 'End'){ scrollTo(maxScroll); e.preventDefault(); }
+    });
+
+    // 滚轮驱动面板内容
+    vp.addEventListener('wheel', (e)=>{
+      if(maxScroll<=0) return;
+      scrollTo(current() + e.deltaY);
+      e.preventDefault();
+    }, {passive:false});
+
+    const ro = new ResizeObserver(metrics);
+    ro.observe(vp); ro.observe(ct);
+    window.addEventListener('load', metrics);
+    metrics();
+    return {metrics};
+  }
+
+  const topPanel = initPanel('vp-top','ct-top','sb-top','th-top','pct-top');
+  const bottomPanel = initPanel('vp-bottom','ct-bottom','sb-bottom','th-bottom','pct-bottom', {blank:true});
+
+  /* =========================================================
+     顶栏导入按钮
+     导入对话 -> 向上方列表追加一条空白会话
+     导入文档 -> 向下方面板导入一份文档内容
+     ========================================================= */
+  const ctTop = document.getElementById('ct-top');
+  const ctBottom = document.getElementById('ct-bottom');
+  const btns = document.querySelectorAll('.topbar__btn');
+
+  btns[0].addEventListener('click', ()=>{
+    const card = document.createElement('div');
+    card.className = 'card';
+    ctTop.appendChild(card);
+    topPanel.metrics();
+    // 滚动到底部，让新导入的条目可见
+    requestAnimationFrame(()=>{
+      ctTop.parentElement.scrollTop = ctTop.parentElement.scrollHeight;
+    });
+  });
+
+  btns[1].addEventListener('click', ()=>{
+    // 已导入过则不再重复填充
+    if(ctBottom.dataset.filled) return;
+    ctBottom.dataset.filled = '1';
+    ctBottom.classList.remove('content--blank');
+    ctBottom.innerHTML =
+      '<div class="block block--lg"></div>' +
+      '<div class="block block--md"></div>' +
+      '<div class="block block--sm"></div>' +
+      '<div class="block block--sm"></div>' +
+      '<div class="block block--md"></div>';
+    // 内容区不再需要固定空白高度
+    ctBottom.style.height = '';
+    bottomPanel.metrics();
+  });
+
+  /* =========================================================
+     可拖拽分割线：调整上下两个面板的高度比
+     默认 1.618 : 1（黄金分割），可自由拖动
+     ========================================================= */
+  const PHI = 1.618;
+  const split = document.getElementById('split');
+  const ratioLabel = document.getElementById('splitRatio');
+  const screen = document.querySelector('.screen');
+  const topEl = document.querySelector('.panel--top');
+  const bottomEl = document.querySelector('.panel--bottom');
+
+  // 面板可用的总高度（去掉顶栏与分割线）——用屏幕高度减去固定部分，结果恒定
+  function usableHeight(){
+    const topbar = document.querySelector('.topbar');
+    const sH = screen.getBoundingClientRect().height;
+    const tH = topbar ? topbar.getBoundingClientRect().height : 0;
+    const spH = split.getBoundingClientRect().height;
+    return Math.max(80, sH - tH - spH);
+  }
+  // 当前上方面板高度 -> 比例值
+  function heightToRatio(h){
+    const total = usableHeight();
+    const bottom = total - h;
+    if(bottom <= 0) return 20;
+    return h / bottom;
+  }
+  // 比例值 -> 上方面板高度
+  function ratioToHeight(r){
+    const total = usableHeight();
+    return (total * r) / (r + 1);
+  }
+
+  let ratio = PHI;
+  let splitDragging = false;
+  let startClientY = 0;
+  let startHeight = 0;   // 拖拽起始时上方面板的像素高度（绝对基准，避免比例漂移）
+  let lastSplitDownAt = 0;
+
+  function applyRatio(r, showLabel){
+    ratio = Math.max(0.15, Math.min(20, r));
+    screen.style.setProperty('--split-ratio', ratio.toFixed(4));
+    const short = ratio >= 1;
+    const a = short ? ratio : 1;
+    const b = short ? 1 : ratio;
+    ratioLabel.textContent = a.toFixed(a>=10?1:3) + ' : ' + b.toFixed(b>=10?1:3);
+    split.setAttribute('aria-valuenow', ratio.toFixed(3));
+    split.setAttribute('aria-valuetext', '上方 : 下方 = ' + ratioLabel.textContent);
+    // 面板尺寸变了，滚动条滑块需重算
+    topPanel.metrics(); bottomPanel.metrics();
+  }
+
+  function onSplitDown(e){
+    const now = e.timeStamp || Date.now();
+    if(now - lastSplitDownAt < 50) return;
+    lastSplitDownAt = now;
+    splitDragging = true;
+    startClientY = e.clientY;
+    // 记录起始像素高度，拖拽过程中总量恒定，换算不会漂移
+    startHeight = topEl.getBoundingClientRect().height;
+    split.classList.add('dragging');
+    document.body.style.userSelect = 'none';
+    // preventDefault 会阻断 mousedown 的默认聚焦，这里显式聚焦以支持键盘操作
+    try{ split.focus({preventScroll:true}); }catch(_){ split.focus(); }
+    try{ split.setPointerCapture(e.pointerId); }catch(_){}
+    e.preventDefault();
+  }
+
+  function onSplitMove(e){
+    if(!splitDragging) return;
+    const dy = e.clientY - startClientY;
+    const total = usableHeight();
+    const newH = Math.max(40, Math.min(total - 40, startHeight + dy));
+    applyRatio(heightToRatio(newH));
+    e.preventDefault();
+  }
+
+  function onSplitUp(){
+    if(!splitDragging) return;
+    splitDragging = false;
+    split.classList.remove('dragging');
+    document.body.style.userSelect = '';
+  }
+
+  split.addEventListener('pointerdown', onSplitDown);
+  split.addEventListener('mousedown', onSplitDown);
+  document.addEventListener('pointermove', onSplitMove, {passive:false});
+  document.addEventListener('mousemove', onSplitMove, {passive:false});
+  document.addEventListener('pointerup', onSplitUp);
+  document.addEventListener('mouseup', onSplitUp);
+  document.addEventListener('pointercancel', onSplitUp);
+
+  // 键盘：上下微调，Home 复位到黄金分割
+  split.addEventListener('keydown', (e)=>{
+    const stepPx = e.shiftKey ? 40 : 12;
+    if(e.key === 'ArrowUp' || e.key === 'ArrowDown'){
+      const total = usableHeight();
+      const curH = (total * ratio) / (ratio + 1);
+      const dir = (e.key === 'ArrowUp') ? 1 : -1;   // 上箭头 -> 上方面板变高
+      const newH = Math.max(40, Math.min(total - 40, curH + dir * stepPx));
+      applyRatio(heightToRatio(newH));
+      e.preventDefault();
+    }
+    else if(e.key === 'Home'){ applyRatio(PHI); e.preventDefault(); }
+    else if(e.key === 'Enter' || e.key === ' '){ applyRatio(PHI); e.preventDefault(); }
+  });
+
+  // 双击复位到黄金分割比
+  split.addEventListener('dblclick', ()=> applyRatio(PHI));
+
+  applyRatio(PHI);
+
+  /* ---------- 自检面板（?debug=1 显示） ---------- */
+  if(location.search.indexOf('debug')>=0){
+    const box=document.createElement('pre');
+    box.id='debugPanel';
+    box.style.cssText='position:fixed;right:8px;bottom:8px;z-index:99;background:#000;color:#0f0;font:11px/1.5 monospace;padding:8px;margin:0;border-radius:6px;max-height:60vh;overflow:auto';
+    document.body.appendChild(box);
+    const render=()=>{
+      const rows=[];
+      [['top','上'],['bottom','下']].forEach(([k,label])=>{
+        const vp=document.getElementById('vp-'+k), ct=document.getElementById('ct-'+k),
+              sb=document.getElementById('sb-'+k), th=document.getElementById('th-'+k),
+              pct=document.getElementById('pct-'+k);
+        const sr=sb.getBoundingClientRect(), tr=th.getBoundingClientRect();
+        rows.push(label+'面板');
+        rows.push('  vp.clientH='+vp.clientHeight+'  ct.scrollH='+ct.scrollHeight+'  maxScroll='+Math.max(0,ct.scrollHeight-vp.clientHeight));
+        rows.push('  sb h='+Math.round(sr.height)+'  thumb h='+Math.round(tr.height)+'  thumb.rectTop='+Math.round(tr.top));
+        rows.push('  inline top='+th.style.top+'  height='+th.style.height+'  pct='+pct.textContent+'  scrollTop='+Math.round(vp.scrollTop));
+      });
+      const txt=rows.join('\n');
+      if(txt!==box.textContent) box.textContent=txt;
+    };
+    setInterval(render,200); render();
+  }
+})();
+</script>
+</body>
+</html>

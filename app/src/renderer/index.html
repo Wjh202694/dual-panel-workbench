@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;">
+<title>双面板 · 共识文档工作台</title>
+<link rel="stylesheet" href="bundle.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ==================== 顶栏 ==================== -->
+  <header class="topbar">
+    <button class="topbar__btn" type="button" id="btn-import-conv">导入对话</button>
+    <button class="topbar__btn" type="button" id="btn-import-doc">导入文档</button>
+    <div class="topbar__spacer"></div>
+    <!-- 右上角：切换提炼模型 -->
+    <button class="topbar__model" type="button" id="btn-model"
+            aria-haspopup="menu" aria-expanded="false" title="切换提炼用的模型">
+      <span class="topbar__model-tag">模型</span>
+      <span class="topbar__model-name" id="model-name">…</span>
+      <span class="topbar__model-caret">▾</span>
+    </button>
+  </header>
+
+  <!-- 切换模型的下拉菜单 -->
+  <div class="modelmenu" id="model-menu" role="menu" hidden>
+    <div class="modelmenu__label">提炼模型</div>
+    <div class="modelmenu__list" id="model-list"></div>
+    <button class="modelmenu__more" type="button" id="model-more">自定义模型与命令…</button>
+  </div>
+
+  <!-- ==================== 主体 ==================== -->
+  <div class="body">
+    <div class="panels">
+
+      <!-- ---------- 上：对话区（与 Demo 一致：空白卡片列表） ---------- -->
+      <section class="panel panel--top">
+        <div class="viewport" id="vp-top">
+          <div class="content" id="ct-top">
+            <div class="card"></div>
+            <div class="card"></div>
+            <div class="card"></div>
+            <div class="card"></div>
+            <div class="card"></div>
+            <div class="card"></div>
+            <div class="card"></div>
+            <div class="card"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------- 中缝：可拖动 ---------- -->
+      <div class="split" id="split" role="separator" aria-orientation="horizontal"
+           aria-label="面板分割线，可拖动调整上下高度比" tabindex="0"
+           aria-valuemin="0.15" aria-valuemax="20" aria-valuenow="1.618">
+        <div class="split__grip"></div>
+        <div class="split__ratio" id="splitRatio">1.618 : 1</div>
+      </div>
+
+      <!-- ---------- 下：文档区（不显示任何文档信息） ---------- -->
+      <section class="panel panel--bottom">
+        <div class="viewport" id="vp-bottom">
+          <div class="content" id="ct-bottom">
+
+            <!-- 外部改动冲突提示（仅在冲突时出现） -->
+            <div class="banner" id="banner" hidden>
+              <span class="banner__text" id="banner-text"></span>
+              <button class="banner__btn banner__btn--primary" type="button" id="banner-reload">重新载入</button>
+              <button class="banner__btn" type="button" id="banner-keep">用我的版本覆盖</button>
+            </div>
+
+            <!-- 编辑区 -->
+            <div class="editor" id="editor" hidden></div>
+
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <!-- ---------- 右侧独立滚动栏 ---------- -->
+    <div class="rail">
+      <div class="rail__seg rail__seg--top" id="sb-top">
+        <div class="pct" id="pct-top">0</div>
+        <div class="track"><div class="thumb" id="th-top" role="scrollbar" aria-orientation="vertical" aria-label="上方面板滚动条" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0"></div></div>
+      </div>
+      <div class="rail__split"></div>
+      <div class="rail__seg rail__seg--bottom" id="sb-bottom">
+        <div class="pct" id="pct-bottom">0</div>
+        <div class="track"><div class="thumb" id="th-bottom" role="scrollbar" aria-orientation="vertical" aria-label="下方面板滚动条" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" tabindex="0"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+</div>
+
+<script src="bundle.js"></script>
+</body>
+</html>

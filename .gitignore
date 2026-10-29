@@ -1,0 +1,12 @@
+# 依赖与构建产物
+node_modules/
+app/src/renderer/bundle.js
+app/src/renderer/bundle.css
+
+# 自检截图
+app/test/out/
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
+desktop.ini

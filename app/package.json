@@ -1,0 +1,23 @@
+{
+  "name": "dual-panel-doc-app",
+  "version": "0.1.0",
+  "description": "双面板滚动 UI · 共识文档工作台",
+  "main": "src/main.js",
+  "scripts": {
+    "build": "esbuild src/renderer/renderer.js --bundle --outfile=src/renderer/bundle.js --format=iife --platform=browser --target=chrome120 --loader:.css=css",
+    "watch": "esbuild src/renderer/renderer.js --bundle --outfile=src/renderer/bundle.js --format=iife --platform=browser --target=chrome120 --loader:.css=css --watch",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron .",
+    "test": "electron test/smoke.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^45.1.0",
+    "esbuild": "^0.28.2"
+  },
+  "dependencies": {
+    "@milkdown/kit": "^7.23.0",
+    "iconv-lite": "^0.7.3"
+  }
+}

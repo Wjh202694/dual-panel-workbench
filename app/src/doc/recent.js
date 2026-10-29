@@ -1,0 +1,79 @@
+'use strict';
+/**
+ * 文档侧的"找得到"：
+ *   1. 最近导入过的文档
+ *   2. 项目文件夹里的 .md / .txt（项目目录来自会话日志里的 cwd）
+ *
+ * 跟对话那边同一个思路：不给一个要靠肉眼认的文件框，给一份有名字、有来路的清单。
+ */
+
+const fs = require('fs');
+const path = require('path');
+const { readSettings, writeSettings } = require('../conv/settings');
+const { projectDirs, humanTime } = require('../conv/recent');
+
+const DOC_EXT = new Set(['.txt', '.md', '.markdown']);
+const MAX_RECENT = 12;
+const MAX_PER_DIR = 40;
+const MAX_DIRS = 8;
+
+/** 最近导入过的文档 */
+function recentDocs() {
+  const s = readSettings();
+  return Array.isArray(s.recentDocs) ? s.recentDocs : [];
+}
+
+/** 记一笔：导入过就记住，下次能直接找到 */
+function rememberDoc(doc) {
+  if (!doc || !doc.path) return recentDocs();
+  const list = recentDocs().filter((d) => d.path !== doc.path);
+  list.unshift({
+    path: doc.path,
+    name: doc.name || path.basename(doc.path),
+    at: Date.now(),
+  });
+  const next = list.slice(0, MAX_RECENT);
+  writeSettings({ recentDocs: next });
+  return next;
+}
+
+/** 项目文件夹里的文档 */
+function docsInProjects() {
+  const groups = [];
+  for (const d of projectDirs().slice(0, MAX_DIRS)) {
+    let entries;
+    try {
+      entries = fs.readdirSync(d.cwd, { withFileTypes: true });
+    } catch (_) {
+      continue;
+    }
+    const items = [];
+    for (const e of entries) {
+      if (!e.isFile()) continue;
+      const ext = path.extname(e.name).toLowerCase();
+      if (!DOC_EXT.has(ext)) continue;
+      const full = path.join(d.cwd, e.name);
+      let st;
+      try {
+        st = fs.statSync(full);
+      } catch (_) {
+        continue;
+      }
+      items.push({ path: full, name: e.name, mtime: st.mtimeMs, size: st.size });
+    }
+    if (!items.length) continue;
+    items.sort((a, b) => b.mtime - a.mtime);
+    groups.push({ dir: d.cwd, at: d.mtime, items: items.slice(0, MAX_PER_DIR) });
+  }
+  return groups;
+}
+
+/** 给选择器用的完整清单 */
+function listDocCandidates() {
+  return {
+    recent: recentDocs(),
+    projects: docsInProjects(),
+  };
+}
+
+module.exports = { recentDocs, rememberDoc, docsInProjects, listDocCandidates, humanTime };

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';">
+<title>选择</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #eef1f5;
+    color: #1b2430;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  .head {
+    flex: 0 0 auto;
+    padding: 16px 20px 12px;
+    background: #fff;
+    border-bottom: 1px solid rgba(27, 36, 48, .09);
+  }
+  .head h1 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
+  .head p { margin: 0; font-size: 12px; color: #8a94a3; line-height: 1.6; }
+
+  .list {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 10px 12px 14px;
+  }
+  .group__label {
+    font-size: 11px; font-weight: 700; color: #8a94a3;
+    padding: 10px 8px 6px; letter-spacing: .04em;
+  }
+  .group__label:first-child { padding-top: 2px; }
+
+  .item {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 9px 11px;
+    margin-bottom: 5px;
+    background: #fff;
+    border: 1px solid rgba(27, 36, 48, .08);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: border-color .14s ease, background .14s ease;
+  }
+  .item:hover { border-color: rgba(47, 125, 111, .35); background: #fcfefd; }
+  .item.sel { border-color: var(--accent, #2f7d6f); background: #eef3f2; }
+  .item__main { flex: 1; min-width: 0; }
+  .item__title {
+    font-size: 13px; font-weight: 600; color: #1b2430;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .item__sub {
+    margin-top: 3px;
+    font-size: 11.5px; color: #8a94a3;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .item__meta {
+    flex: 0 0 auto;
+    font-size: 11px; color: #8a94a3;
+    text-align: right; white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .item__meta small { display: block; opacity: .75; }
+
+  .foot {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 16px;
+    background: #fff;
+    border-top: 1px solid rgba(27, 36, 48, .09);
+  }
+  .foot .spacer { flex: 1; }
+  button {
+    font: inherit; font-size: 12.5px; font-weight: 600;
+    padding: 7px 15px; border-radius: 8px; cursor: pointer;
+    background: #f7f9fb; border: 1px solid rgba(27, 36, 48, .13); color: #1b2430;
+  }
+  button:hover { background: #eef3f2; border-color: rgba(47, 125, 111, .4); color: #2f7d6f; }
+  button.primary { background: #2f7d6f; border-color: #2f7d6f; color: #fff; }
+  button.primary:hover { background: #27695d; color: #fff; }
+  button.primary:disabled { opacity: .45; cursor: default; }
+  .empty { padding: 30px 12px; text-align: center; color: #8a94a3; font-size: 12.5px; line-height: 1.8; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <h1 id="title">选择</h1>
+    <p id="subtitle"></p>
+  </div>
+  <div class="list" id="list"></div>
+  <div class="foot">
+    <button type="button" id="browse">浏览其他文件…</button>
+    <div class="spacer"></div>
+    <button type="button" id="cancel">取消</button>
+    <button type="button" id="ok" class="primary" disabled>导入</button>
+  </div>
+  <script src="picker.js"></script>
+</body>
+</html>
