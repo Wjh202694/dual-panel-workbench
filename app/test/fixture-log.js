@@ -165,4 +165,48 @@ function appendRounds(filePath, count) {
   return filePath;
 }
 
-module.exports = { FIXTURE, writeFixture, appendRounds };
+/**
+ * 追加一轮「改了代码」的对话：Write + Edit 两个工具调用。
+ *
+ * codeFile 是磁盘上真实存在的文件（自检会先写好），
+ * 里面已经含 Edit 的 new_string —— 这样后端算行号时能在文件里定位到。
+ */
+function appendCodeRound(logPath, codeFile, writeContent) {
+  const fs = require('fs');
+  const recs = [
+    {
+      type: 'user',
+      origin: { kind: 'human' },
+      message: { role: 'user', content: '把示例文件改一下' },
+    },
+    {
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'c1',
+            name: 'Write',
+            input: { file_path: codeFile, content: writeContent },
+          },
+          {
+            type: 'tool_use',
+            id: 'c2',
+            name: 'Edit',
+            input: {
+              file_path: codeFile,
+              old_string: 'const a = 1;',
+              new_string: 'const a = 2;\nconst b = 3;',
+            },
+          },
+          { type: 'text', text: '改完了。' },
+        ],
+      },
+    },
+  ];
+  fs.appendFileSync(logPath, recs.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
+  return logPath;
+}
+
+module.exports = { FIXTURE, writeFixture, appendRounds, appendCodeRound };

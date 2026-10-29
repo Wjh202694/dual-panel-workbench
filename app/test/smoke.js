@@ -9,7 +9,7 @@ const path = require('path');
 const os = require('os');
 const iconv = require('iconv-lite');
 
-const { writeFixture, appendRounds } = require('./fixture-log');
+const { writeFixture, appendRounds, appendCodeRound } = require('./fixture-log');
 
 const OUT = path.join(__dirname, 'out');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'docsmoke-'));
@@ -164,13 +164,19 @@ async function run(win) {
   /* ---- 6. 导入筛选逻辑 + GBK 编码往返 ---- */
   const gbkPath = path.join(TMP, '中文需求.txt');
   const badPath = path.join(TMP, '图片.png');
+  const codePath = path.join(TMP, '示例.py');
   fs.writeFileSync(gbkPath, iconv.encode('中文内容：需求说明\n第二行\n', 'gbk'));
   fs.writeFileSync(badPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  fs.writeFileSync(codePath, 'def hello():\n    return "hi"\n', 'utf8');
 
-  const picked = await main.loadDocsFromPaths([gbkPath, badPath]);
-  check('导入只接受 txt / md，其余跳过',
-    picked.docs.length === 1 && picked.skipped.length === 1 && picked.docs[0].path === gbkPath,
+  const picked = await main.loadDocsFromPaths([gbkPath, badPath, codePath]);
+  check('导入接受 txt / md 和 5 种源代码，其余跳过',
+    picked.docs.length === 2 && picked.skipped.length === 1 &&
+      picked.docs[0].path === gbkPath && picked.docs[1].path === codePath,
     JSON.stringify({ docs: picked.docs.map((d) => d.path), skipped: picked.skipped }));
+  check('源代码按纯文本处理（不走 Markdown 排版）',
+    picked.docs[1].kind === 'text' && picked.docs[1].content.includes('def hello'),
+    JSON.stringify({ kind: picked.docs[1].kind, content: picked.docs[1].content }));
   check('GBK 文件正确识别并解码',
     picked.docs[0].encoding === 'gbk' && picked.docs[0].content === '中文内容：需求说明\n第二行\n',
     JSON.stringify({ enc: picked.docs[0].encoding, content: picked.docs[0].content }));
@@ -471,6 +477,96 @@ async function run(win) {
 
   // 把日志恢复成原来那 3 轮，后面的用例还要用它
   writeFixture(logPath);
+
+  /* ---- 9f. 「code」小节：点一下才加载，改动显示在下方 ---- */
+  // 先重新导入一次（干净的一份），再追加一轮"改了代码"的对话
+  await win.webContents.executeJavaScript(`(() => {
+    document.querySelectorAll('.conv-group').forEach(g => g.remove());
+    return true;
+  })()`);
+  await win.webContents.executeJavaScript(
+    `window.__app.conversations.openLogByPath(${JSON.stringify(logPath)}).then(() => true)`
+  );
+  await delay(1200);
+
+  const codeFile = path.join(TMP, 'demo-code.ts');
+  fs.writeFileSync(codeFile, 'const a = 2;\nconst b = 3;\n', 'utf8');
+  appendCodeRound(logPath, codeFile, 'const a = 1;\n');
+  await win.webContents.executeJavaScript(`window.__app.conversations.refresh()`);
+  await delay(2500);
+
+  const codeSec = await win.webContents.executeJavaScript(`(() => {
+    const card = document.querySelector('.conv-card:last-child');
+    const secs = card ? Array.from(card.querySelectorAll('.conv-sec')) : [];
+    const toggle = card ? card.querySelector('.conv-sec--code .conv-sec__toggle') : null;
+    return {
+      cardCount: document.querySelectorAll('.conv-card').length,
+      secCount: secs.length,
+      lastIsCode: !!(secs.length && secs[secs.length - 1].classList.contains('conv-sec--code')),
+      isButton: !!(toggle && toggle.tagName === 'BUTTON'),
+      label: toggle ? toggle.textContent.trim() : '',
+      recapBefore: !!(secs[1] && secs[1].querySelector('.conv-recap, .conv-recapbox')),
+      codeBoxEmpty: !!(card && card.querySelector('.conv-codebox') && !card.querySelector('.conv-codebox').textContent.trim()),
+      codeViewShown: !!document.querySelector('.codeview'),
+    };
+  })()`);
+  check('卡片上 recap 下面多了一节 code，小标题是个按键',
+    codeSec.secCount === 3 && codeSec.lastIsCode === true && codeSec.isButton === true,
+    JSON.stringify(codeSec));
+  check('没点之前不加载（下方不会出现代码改动）',
+    codeSec.codeBoxEmpty === true && codeSec.codeViewShown === false, JSON.stringify(codeSec));
+
+  const clicked = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const btn = document.querySelector('.conv-card:last-child .conv-sec--code .conv-sec__toggle');
+    if (!btn) return { noBtn: true };
+    btn.click();
+    await sleep(2500);
+    const view = document.querySelector('.codeview');
+    const add = view ? view.querySelectorAll('.codeview__line--add') : [];
+    const del = view ? view.querySelectorAll('.codeview__line--del') : [];
+    return {
+      shown: !!view,
+      path: view ? (view.querySelector('.codeview__path') || {}).textContent || '' : '',
+      addCount: add.length,
+      delCount: del.length,
+      firstAddLine: add[0] ? (add[0].querySelector('.codeview__no') || {}).textContent || '' : '',
+      texts: Array.from(view ? view.querySelectorAll('.codeview__text') : []).map(e => e.textContent),
+      btnLabel: btn.textContent.trim(),
+    };
+  })()`);
+  check('点「code」之后代码改动显示在下方那块地方',
+    clicked.shown === true && /demo-code\.ts/.test(clicked.path), JSON.stringify(clicked));
+  check('显示了新增和删除的行，还带行号',
+    clicked.addCount === 3 && clicked.delCount === 1 && clicked.firstAddLine === '1',
+    JSON.stringify(clicked));
+  check('改动内容对得上',
+    clicked.texts.indexOf('const b = 3;') >= 0 && clicked.texts.indexOf('const a = 1;') >= 0,
+    JSON.stringify(clicked.texts));
+
+  {
+    const shot = await win.webContents.capturePage();
+    fs.writeFileSync(path.join(OUT, 'code.png'), shot.toPNG());
+  }
+
+  // 点别的卡片 → 下方只显示点到的那一轮
+  const other = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const btns = document.querySelectorAll('.conv-card .conv-sec--code .conv-sec__toggle');
+    if (btns.length < 2) return { noOther: true };
+    btns[0].click();
+    await sleep(2000);
+    const view = document.querySelector('.codeview');
+    return {
+      views: document.querySelectorAll('.codeview').length,
+      path: view ? (view.querySelector('.codeview__path') || {}).textContent || '' : '',
+      head: view ? (view.querySelector('.codeview__head') || {}).textContent || '' : '',
+      none: view ? (view.querySelector('.codeview__none') || {}).textContent || '' : '',
+    };
+  })()`);
+  check('点别的卡片时下方只留那一轮的改动',
+    other.views === 1 && !/demo-code\.ts/.test(other.path) && /没有改文件/.test(other.none),
+    JSON.stringify(other));
 
   // 还原提炼引擎设置与「最近导入」清单（别把临时文件留在用户真实设置里）
   await win.webContents.executeJavaScript(
@@ -1072,6 +1168,7 @@ async function run(win) {
 
   // 用 API 引擎真跑一轮提炼，验证整条链（不只是测试连接）
   apiHits.length = 0;
+  writeFixture(logPath); // 把日志恢复成 3 轮，下面正好断言「3 轮 = 3 次请求」
   await win.webContents.executeJavaScript(
     `window.api.setEngineSettings(${JSON.stringify(apiCfg)}).then(() => true)`
   );

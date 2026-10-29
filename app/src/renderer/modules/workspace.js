@@ -138,6 +138,108 @@ export function createWorkspace({ api, toaster, els }) {
     saveDoc(doc);
   }
 
+  /* ---------------- 代码改动视图（点卡片上的「code」才加载） ---------------- */
+
+  let codeView = null;
+
+  function codeLine(sign, l) {
+    const row = document.createElement('div');
+    row.className = 'codeview__line codeview__line--' + (sign === '+' ? 'add' : 'del');
+    const no = document.createElement('span');
+    no.className = 'codeview__no';
+    no.textContent = l && l.line != null ? String(l.line) : '';
+    const tx = document.createElement('span');
+    tx.className = 'codeview__text';
+    tx.textContent = (l && l.text) || '';
+    row.appendChild(no);
+    row.appendChild(tx);
+    return row;
+  }
+
+  function renderCodeView(payload) {
+    const el = document.createElement('div');
+    el.className = 'codeview';
+
+    const files = (payload && payload.files) || [];
+    const head = document.createElement('div');
+    head.className = 'codeview__head';
+    head.textContent = `第 ${payload && payload.index} 轮 · 改了 ${files.length} 个文件`;
+    el.appendChild(head);
+
+    /* 下面这块地方平时是放文档的，代码改动是暂借。文档还在就留个回去的路 */
+    if (doc && doc.view) {
+      const back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'codeview__back';
+      back.textContent = '回到文档';
+      back.addEventListener('click', () => closeCode());
+      head.appendChild(back);
+    }
+
+    for (const f of files) {
+      const block = document.createElement('div');
+      block.className = 'codeview__file';
+
+      const path = document.createElement('div');
+      path.className = 'codeview__path';
+      path.textContent = f.rel || f.file || '';
+      if (f.exists === false) {
+        const tag = document.createElement('span');
+        tag.className = 'codeview__tag';
+        tag.textContent = '文件已不在';
+        path.appendChild(tag);
+      }
+      block.appendChild(path);
+
+      for (const ch of f.changes || []) {
+        const list = document.createElement('div');
+        list.className = 'codeview__lines';
+        for (const l of ch.removed || []) list.appendChild(codeLine('-', l));
+        for (const l of ch.added || []) list.appendChild(codeLine('+', l));
+        block.appendChild(list);
+      }
+      el.appendChild(block);
+    }
+
+    if (!files.length) {
+      const none = document.createElement('div');
+      none.className = 'codeview__none';
+      none.textContent = '这一轮没有改文件';
+      el.appendChild(none);
+    }
+    return el;
+  }
+
+  /** 在下方显示某一轮的代码改动（会暂时占住文档的位置） */
+  function showCode(payload) {
+    closeCode();
+    const el = renderCodeView(payload);
+    editorHost.hidden = false;
+    editorHost.appendChild(el);
+    codeView = el;
+    bottomContent.dataset.filled = '1';
+    bottomContent.style.height = '';
+    if (doc && doc.view) doc.view.el.hidden = true;
+    hideBanner();
+    notifyLayout();
+    const vp = document.getElementById('vp-bottom');
+    if (vp) vp.scrollTop = 0;
+  }
+
+  /** 关掉代码改动视图，文档还在就把它放回来 */
+  function closeCode() {
+    if (!codeView) return;
+    codeView.remove();
+    codeView = null;
+    if (doc && doc.view) doc.view.el.hidden = false;
+    if (!doc) {
+      editorHost.hidden = true;
+      delete bottomContent.dataset.filled;
+      bottomContent.style.height = '';
+    }
+    notifyLayout();
+  }
+
   /* ---------------- 打开 / 关闭 ---------------- */
 
   async function openDoc(meta) {
@@ -147,6 +249,7 @@ export function createWorkspace({ api, toaster, els }) {
       if (doc.dirty) await saveDoc(doc);
       destroyDoc(doc);
     }
+    closeCode(); // 代码改动视图让位给文档
 
     doc = {
       meta,
@@ -197,6 +300,7 @@ export function createWorkspace({ api, toaster, els }) {
     if (doc.dirty) saveDoc(doc);
     destroyDoc(doc);
     doc = null;
+    closeCode();
     editorHost.hidden = true;
     delete bottomContent.dataset.filled;
     bottomContent.style.height = '';
@@ -276,7 +380,11 @@ export function createWorkspace({ api, toaster, els }) {
     }
     if (skipped.length) {
       const names = skipped.map((p) => p.split(/[\\/]/).pop()).join('、');
-      toaster.show(`已跳过不支持的文件（仅支持 .txt / .md）：${names}`, 'warn', 6000);
+      toaster.show(
+        '已跳过不支持的文件（支持 .txt / .md，以及 .py / .js / .ts / .tsx / .jsx）：' + names,
+        'warn',
+        6000
+      );
     }
   }
 
@@ -288,6 +396,8 @@ export function createWorkspace({ api, toaster, els }) {
     saveActive,
     closeDoc,
     openDoc,
+    showCode,
+    closeCode,
     getDoc: () => doc,
   };
 }

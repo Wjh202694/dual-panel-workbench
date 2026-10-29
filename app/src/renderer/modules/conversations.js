@@ -31,7 +31,7 @@ function reasonText(err) {
   return raw || '未知错误';
 }
 
-export function createConversations({ api, toaster, onLayout }) {
+export function createConversations({ api, toaster, onLayout, onShowCode }) {
   const container = document.getElementById('ct-top');
   const placeholders = Array.from(container.querySelectorAll('.card'));
 
@@ -106,9 +106,26 @@ export function createConversations({ api, toaster, onLayout }) {
     rec.appendChild(box);
 
     body.appendChild(rec);
+
+    /* ---- code：小标题是个按键，点一下才加载这一轮的代码改动 ---- */
+    const code = document.createElement('section');
+    code.className = 'conv-sec conv-sec--code';
+
+    const codeBtn = document.createElement('button');
+    codeBtn.type = 'button';
+    codeBtn.className = 'conv-sec__toggle';
+    codeBtn.textContent = 'code';
+    codeBtn.title = '点击加载这一轮改了哪些代码（在下方显示）';
+    code.appendChild(codeBtn);
+
+    const codeBox = document.createElement('div');
+    codeBox.className = 'conv-codebox';
+    code.appendChild(codeBox);
+
+    body.appendChild(code);
     card.appendChild(body);
 
-    return { card, box };
+    return { card, box, codeBtn, codeBox };
   }
 
   function renderBullets(box, bullets, againBtn) {
@@ -233,10 +250,40 @@ export function createConversations({ api, toaster, onLayout }) {
    * 导入时用、刷新时也用（刷新带出来的新轮次走同一条路）。
    */
   function addRoundToGroup(g, round) {
-    const { card, box } = buildCard(round);
+    const { card, box, codeBtn, codeBox } = buildCard(round);
     g.root.appendChild(card);
-    const entry = { card, box, round };
+    const entry = { card, box, round, codeBtn, codeBox };
     g.cards.set(round.index, entry);
+
+    /* 「code」是个按键：点了才去加载这一轮的代码改动，
+       加载完把改动送到下方的大长方形里显示（一次只显示点到的那一轮）。
+       没点之前一律不加载 —— 省得几十轮对话一进来就翻日志。 */
+    codeBtn.addEventListener('click', async () => {
+      if (codeBtn.disabled) return;
+      const label = codeBtn.textContent;
+      codeBtn.disabled = true;
+      codeBtn.textContent = 'code · 载入中…';
+      codeBox.textContent = '';
+      try {
+        const payload = await api.roundCode(g.path, round.index);
+        const info = document.createElement('div');
+        info.className = 'conv-code__info';
+        const n = payload && payload.total ? payload.total : 0;
+        info.textContent = n ? `这一轮改了 ${n} 个文件，已在下方显示` : '这一轮没有改文件';
+        codeBox.appendChild(info);
+        codeBtn.textContent = `code · ${n} 个文件`;
+        // 下方那块地方只显示点到的那一轮：这一轮没改代码，就把上一轮的清掉
+        if (onShowCode) onShowCode(payload);
+      } catch (err) {
+        const bad = document.createElement('div');
+        bad.className = 'conv-code__err';
+        bad.textContent = '加载失败：' + reasonText(err);
+        codeBox.appendChild(bad);
+        codeBtn.textContent = label;
+      } finally {
+        codeBtn.disabled = false;
+      }
+    });
 
     if (round.bullets && round.bullets.length) {
       // 有缓存：直接显示已保存的要点，并给一个「重新提炼」入口

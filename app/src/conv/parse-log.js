@@ -96,6 +96,44 @@ function describeTool(name, input) {
   }
 }
 
+/**
+ * 从一次工具调用里抽出「文件改动」—— 只管写文件的那几个工具
+ *
+ * 产出的每一项：{ file, kind:'write'|'edit'|'notebook', oldText, newText }
+ * 没有文件路径的、新旧文本都空的，都跳过（不是真的改动）。
+ */
+function collectEdits(name, input, out) {
+  const i = input || {};
+  const push = (file, kind, oldText, newText) => {
+    if (!file) return;
+    const o = String(oldText == null ? '' : oldText);
+    const n = String(newText == null ? '' : newText);
+    if (!o && !n) return; // 两边都空 = 没改东西
+    out.push({ file: String(file), kind, oldText: o, newText: n });
+  };
+
+  switch (name) {
+    case 'Write':
+      push(i.file_path, 'write', '', i.content || '');
+      break;
+    case 'Edit':
+      push(i.file_path, 'edit', i.old_string || '', i.new_string || '');
+      break;
+    case 'MultiEdit': {
+      const list = Array.isArray(i.edits) ? i.edits : [];
+      for (const e of list) {
+        push(i.file_path, 'edit', (e && e.old_string) || '', (e && e.new_string) || '');
+      }
+      break;
+    }
+    case 'NotebookEdit':
+      push(i.notebook_path, 'notebook', '', i.new_source || '');
+      break;
+    default:
+      break; // 其它工具不改文件
+  }
+}
+
 /** 抽出 agent 给用户的选择（AskUserQuestion 的选项） */
 function collectChoices(input, out) {
   const qs = (input && input.questions) || [];
@@ -112,7 +150,7 @@ function collectChoices(input, out) {
 
 /**
  * 解析日志文本
- * @returns {{rounds: Array<{index:number,prompt:string,choices:Array,actions:Array<string>,reply:string}>}}
+ * @returns {{rounds: Array<{index:number,prompt:string,choices:Array,actions:Array<string>,edits:Array,reply:string}>, cwd:string}}
  */
 function parseTranscript(text) {
   const records = [];
@@ -127,8 +165,11 @@ function parseTranscript(text) {
 
   const rounds = [];
   let cur = null;
+  let cwd = ''; // 日志里记的项目目录（第一条带 cwd 的记录说了算）
 
   for (const r of records) {
+    if (!cwd && typeof r.cwd === 'string' && r.cwd) cwd = r.cwd;
+
     if (r.isSidechain) continue; // 子代理的会话不算人机轮次
 
     /* 中途插话：用户在 agent 干活时又发了一条。
@@ -145,6 +186,7 @@ function parseTranscript(text) {
             raw,
             choices: [],
             actions: [],
+            edits: [],
             reply: '',
             _texts: [],
           };
@@ -171,6 +213,7 @@ function parseTranscript(text) {
         raw,           // 展示用：用户的原话，一个字都不改
         choices: [],
         actions: [],
+        edits: [],
         reply: '',
         _texts: [],
       };
@@ -185,6 +228,7 @@ function parseTranscript(text) {
         if (!b) continue;
         if (b.type === 'tool_use') {
           cur.actions.push(describeTool(b.name, b.input));
+          collectEdits(b.name, b.input, cur.edits);
           if (b.name === 'AskUserQuestion') collectChoices(b.input, cur.choices);
         } else if (b.type === 'text' && b.text) {
           cur._texts.push(b.text);
@@ -199,7 +243,7 @@ function parseTranscript(text) {
     delete r._texts;
   }
 
-  return { rounds };
+  return { rounds, cwd };
 }
 
 /** 供提炼用的素材（控制长度，避免提示词过长） */

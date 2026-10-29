@@ -15,8 +15,13 @@ const docRecent = require('./doc/recent');
 const { readSettings, writeSettings } = require('./conv/settings');
 const { MODEL_PRESETS, shortLabel } = require('./conv/models');
 
-/** 只允许导入 txt / md */
-const ALLOWED_EXT = new Set(['.txt', '.md', '.markdown']);
+/**
+ * 能导入的文件类型：文档 + 5 种主流源代码（Python、JS/TS 家族）。
+ * 源代码跟 txt 一样按纯文本编辑，不走 Markdown 排版。
+ * （跟 doc/recent.js 用同一个集合，别各写一份。）
+ */
+const ALLOWED_EXT = docRecent.DOC_EXT;
+const CODE_EXT = ['py', 'js', 'ts', 'tsx', 'jsx'];
 
 let win = null;
 
@@ -74,7 +79,7 @@ async function readDoc(filePath) {
     path: filePath,
     name: path.basename(filePath),
     ext,
-    kind: ext === '.txt' ? 'text' : 'markdown',
+    kind: ext === '.md' || ext === '.markdown' ? 'markdown' : 'text',
     content: dec.text,
     encoding: dec.encoding,
     bom: dec.bom,
@@ -153,6 +158,7 @@ ipcMain.handle('doc:pick', async () => {
     filters: [
       { name: '文本文档（.txt / .md）', extensions: ['txt', 'md', 'markdown'] },
       { name: 'Markdown 文档', extensions: ['md', 'markdown'] },
+      { name: '源代码（.py / .js / .ts…）', extensions: CODE_EXT },
       { name: '纯文本', extensions: ['txt'] },
       { name: '全部文件', extensions: ['*'] },
     ],
@@ -284,6 +290,13 @@ ipcMain.handle('conv:pick', async () => {
 ipcMain.handle('conv:load', async (_e, filePath) => {
   if (!filePath) throw new Error('缺少日志路径');
   return conv.loadConversation(filePath);
+});
+
+/** 某一轮改了哪些代码：在哪个文件、哪一行新增了什么、删除了什么 */
+ipcMain.handle('conv:code', async (_e, payload) => {
+  const { filePath, index } = payload || {};
+  if (!filePath) throw new Error('缺少日志路径');
+  return conv.loadRoundCode(filePath, Number(index));
 });
 
 /**
@@ -560,6 +573,7 @@ ipcMain.on('picker:browse', async (_e, kind) => {
     filters: [
       { name: '文本文档（.txt / .md）', extensions: ['txt', 'md', 'markdown'] },
       { name: 'Markdown 文档', extensions: ['md', 'markdown'] },
+      { name: '源代码（.py / .js / .ts…）', extensions: CODE_EXT },
       { name: '纯文本', extensions: ['txt'] },
       { name: '全部文件', extensions: ['*'] },
     ],

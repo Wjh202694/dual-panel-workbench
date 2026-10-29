@@ -98,4 +98,135 @@ async function distillRound(logPath, index) {
   return { index, bullets, recapFile: file, recaps };
 }
 
-module.exports = { loadConversation, loadNewRounds, distillRound, readLogText };
+/**
+ * 某一轮改了哪些代码
+ *
+ * 日志里记的是「改动的文本」，行号要拿现在的磁盘内容去对：
+ * 找到 newText 第一次出现的位置 → 起始行号；找不到就留空（null = 不知道）。
+ *
+ * @param {string} logPath 日志路径
+ * @param {number} index 轮次序号（从 1 开始）
+ */
+async function loadRoundCode(logPath, index) {
+  const text = await readLogText(logPath);
+  const { rounds, cwd } = parseTranscript(text);
+  const round = rounds.find((r) => r.index === index);
+  if (!round) throw new Error(`日志里找不到第 ${index} 轮`);
+
+  const projectDir = cwd || '';
+  const edits = round.edits || [];
+  if (!edits.length) return { index, cwd: projectDir, total: 0, files: [] };
+
+  // 同一个文件只读一次盘；按文件分组，多条改动合成一个文件项
+  const byFile = new Map();
+  const contentCache = new Map();
+
+  for (const e of edits) {
+    const file = String(e.file || '');
+    if (!file) continue;
+    if (!byFile.has(file)) {
+      byFile.set(file, {
+        file,
+        rel: relativeTo(projectDir, file),
+        exists: false,
+        changes: [],
+      });
+    }
+    if (!contentCache.has(file)) contentCache.set(file, await readFileIfExists(file));
+    const { exists, content } = contentCache.get(file);
+    const item = byFile.get(file);
+    item.exists = exists;
+    item.changes.push(buildChange(e, content));
+  }
+
+  const files = Array.from(byFile.values());
+  return { index, cwd: projectDir, total: files.length, files };
+}
+
+/** 读磁盘上的文件；读不到就当它不存在（文件被删了 / 路径变了） */
+async function readFileIfExists(file) {
+  try {
+    const buf = await fsp.readFile(file);
+    let content;
+    try {
+      content = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    } catch (_) {
+      content = buf.toString('utf8');
+    }
+    return { exists: true, content };
+  } catch (_) {
+    return { exists: false, content: '' };
+  }
+}
+
+/** 把绝对路径换成相对项目目录的路径；算不出来就还是绝对路径 */
+function relativeTo(cwd, file) {
+  if (!cwd || !file) return file || '';
+  const base = String(cwd).replace(/[\\/]+$/, '');
+  if (!base) return file;
+  const norm = (s) => (process.platform === 'win32' ? s.toLowerCase() : s);
+  if (norm(file) === norm(base)) return path.basename(file);
+  for (const sep of ['/', '\\']) {
+    if (norm(file).startsWith(norm(base + sep))) return file.slice(base.length + 1);
+  }
+  return file;
+}
+
+/**
+ * 文本拆行：按换行切，缩进原样留着，只去掉行尾空白；
+ * 末尾多出来的换行不算一行。
+ */
+function splitLines(text) {
+  const lines = String(text == null ? '' : text).split(/\r?\n/).map((l) => l.replace(/[ \t]+$/, ''));
+  while (lines.length && lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
+
+/** 在文件内容里找 newText 第一次出现的行号（1 起）；找不到返回 null */
+function findStartLine(content, needle) {
+  if (!needle) return null;
+  const idx = content.indexOf(needle);
+  if (idx < 0) return null;
+  let line = 1;
+  for (let i = 0; i < idx; i++) {
+    if (content[i] === '\n') line++;
+  }
+  return line;
+}
+
+/** 一条改动 → { kind, added:[{line,text}], removed:[{line,text}] } */
+function buildChange(edit, currentContent) {
+  const kind = edit.kind;
+
+  if (kind === 'write') {
+    // 整个文件都是新内容，行号天然是 1..n
+    const lines = splitLines(edit.newText);
+    return {
+      kind,
+      added: lines.map((t, i) => ({ line: i + 1, text: t })),
+      removed: [],
+    };
+  }
+
+  if (kind === 'notebook') {
+    // notebook 的行号对不上源码，给 null
+    const lines = splitLines(edit.newText);
+    return {
+      kind,
+      added: lines.map((t) => ({ line: null, text: t })),
+      removed: [],
+    };
+  }
+
+  // edit：新增块在现在的文件里第几行
+  const addedLines = splitLines(edit.newText);
+  const removedLines = splitLines(edit.oldText);
+  const start = findStartLine(currentContent, edit.newText);
+  return {
+    kind: 'edit',
+    added: addedLines.map((t, i) => ({ line: start === null ? null : start + i, text: t })),
+    removed: removedLines.map((t, i) => ({ line: start === null ? null : start + i, text: t })),
+  };
+}
+
+module.exports = { loadConversation, loadNewRounds, distillRound, loadRoundCode, readLogText };

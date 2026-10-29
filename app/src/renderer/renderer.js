@@ -65,6 +65,8 @@ const conversations = createConversations({
   api: window.api,
   toaster,
   onLayout: () => topPanel.metrics(),
+  // 点卡片上的「code」才加载这一轮的代码改动，显示在下方的大长方形里
+  onShowCode: (payload) => workspace.showCode(payload),
 });
 
 /* ---------------- 顶栏 ---------------- */
@@ -90,7 +92,11 @@ window.api.onPickerResult(async (res) => {
       if (docs.length) await workspace.openDoc(docs[docs.length - 1]);
       if (res.skipped && res.skipped.length) {
         const names = res.skipped.map((p) => p.split(/[\\/]/).pop()).join('、');
-        toaster.show(`已跳过不支持的文件（仅支持 .txt / .md）：${names}`, 'warn', 6000);
+        toaster.show(
+          '已跳过不支持的文件（支持 .txt / .md，以及 .py / .js / .ts / .tsx / .jsx）：' + names,
+          'warn',
+          6000
+        );
       }
     }
   } catch (err) {

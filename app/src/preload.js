@@ -44,6 +44,8 @@ contextBridge.exposeInMainWorld('api', {
   reloadConversation: (filePath, afterIndex, limit) =>
     ipcRenderer.invoke('conv:reload', { filePath, afterIndex, limit }),
   distillRound: (filePath, index) => ipcRenderer.invoke('conv:distill', { filePath, index }),
+  /* 某一轮改了哪些代码 */
+  roundCode: (filePath, index) => ipcRenderer.invoke('conv:code', { filePath, index }),
   recapFile: (filePath) => ipcRenderer.invoke('conv:recap-file', filePath),
   getEngineSettings: () => ipcRenderer.invoke('conv:settings:get'),
   setEngineSettings: (patch) => ipcRenderer.invoke('conv:settings:set', patch),

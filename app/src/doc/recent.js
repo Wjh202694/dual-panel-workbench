@@ -2,7 +2,7 @@
 /**
  * 文档侧的"找得到"：
  *   1. 最近导入过的文档
- *   2. 项目文件夹里的 .md / .txt（项目目录来自会话日志里的 cwd）
+ *   2. 项目文件夹里的 .md / .txt / 源代码（项目目录来自会话日志里的 cwd）
  *
  * 跟对话那边同一个思路：不给一个要靠肉眼认的文件框，给一份有名字、有来路的清单。
  */
@@ -12,7 +12,15 @@ const path = require('path');
 const { readSettings, writeSettings } = require('../conv/settings');
 const { projectDirs, humanTime } = require('../conv/recent');
 
-const DOC_EXT = new Set(['.txt', '.md', '.markdown']);
+/**
+ * 能导入的文件类型。
+ * 除了文档（.txt / .md / .markdown），也收源代码 —— 5 种主流的：
+ * Python 和 JS/TS 家族。要加别的类型就往这个集合里加。
+ */
+const DOC_EXT = new Set([
+  '.txt', '.md', '.markdown',
+  '.py', '.js', '.ts', '.tsx', '.jsx',
+]);
 const MAX_RECENT = 12;
 const MAX_PER_DIR = 40;
 const MAX_DIRS = 8;
@@ -76,4 +84,4 @@ function listDocCandidates() {
   };
 }
 
-module.exports = { recentDocs, rememberDoc, docsInProjects, listDocCandidates, humanTime };
+module.exports = { recentDocs, rememberDoc, docsInProjects, listDocCandidates, humanTime, DOC_EXT };

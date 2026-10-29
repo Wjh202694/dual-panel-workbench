@@ -389,6 +389,29 @@ body {
   color: var(--ink-3);
 }
 
+/* 「code」小标题是个按键：点一下才加载那一轮的代码改动（渐进式披露） */
+.conv-sec__toggle {
+  font: inherit;
+  margin: 0 0 7px;
+  padding: 1px 8px 2px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: var(--ink-3);
+  background: transparent;
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.conv-sec__toggle:hover:not([disabled]) { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.conv-sec__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.conv-sec__toggle[disabled] { opacity: .6; cursor: default; }
+
+.conv-codebox { min-height: 0; }
+.conv-code__info { font-size: 12px; color: var(--ink-3); line-height: 1.6; }
+.conv-code__err { font-size: 12px; color: var(--danger); line-height: 1.6; }
+
 .conv-prompt {
   margin: 0;
   font-size: 13px;
@@ -463,6 +486,72 @@ body {
 
 /* ==================== 下方文档区 ==================== */
 .editor { flex: 1; padding: 20px 26px 40px; }
+
+/* 代码改动视图：点卡片上的「code」之后，显示在下方这块地方 */
+.codeview {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Sarasa Mono SC",
+    "PingFang SC", "Microsoft YaHei", monospace;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--ink);
+}
+.codeview__head {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-3);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.codeview__back {
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid var(--line-2);
+  color: var(--ink-2);
+}
+.codeview__back:hover { border-color: var(--accent); color: var(--accent); }
+.codeview__file { margin-bottom: 18px; }
+.codeview__path {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-2);
+  padding-bottom: 5px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+  word-break: break-all;
+}
+.codeview__tag {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-3);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 0 6px;
+}
+.codeview__lines { white-space: pre; overflow-x: auto; }
+.codeview__line { display: flex; gap: 10px; padding: 0 4px; }
+.codeview__no {
+  flex: 0 0 auto;
+  min-width: 3.2em;
+  text-align: right;
+  color: var(--ink-3);
+  opacity: .7;
+  user-select: none;
+}
+.codeview__text { flex: 1 1 auto; white-space: pre; }
+.codeview__line--add { background: rgba(47, 125, 111, .10); }
+.codeview__line--add .codeview__text { color: #1f6b5c; }
+.codeview__line--del { background: rgba(192, 57, 43, .09); }
+.codeview__line--del .codeview__text { color: #a5342a; text-decoration: line-through; text-decoration-color: rgba(165, 52, 42, .45); }
+.codeview__none { font-size: 12.5px; color: var(--ink-3); }
 
 /* 当前文档的视图容器 */
 .docview { display: block; min-height: 100%; }
