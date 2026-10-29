@@ -414,6 +414,20 @@ body {
 }
 .conv-recap__retry:hover { border-color: var(--accent); color: var(--accent); }
 
+/* 「重新提炼」：已保存过的轮次也能用当前模型重跑（会覆盖 .recap.md 里那轮） */
+.conv-recap__again {
+  font: inherit;
+  font-size: 11.5px;
+  margin-top: 4px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-3);
+}
+.conv-recap__again:hover { border-color: var(--line-2); color: var(--accent); }
+
 /* ==================== 下方文档区 ==================== */
 .editor { flex: 1; padding: 20px 26px 40px; }
 

@@ -93,7 +93,7 @@ export function createConversations({ api, toaster, onLayout }) {
     return { card, box };
   }
 
-  function renderBullets(box, bullets) {
+  function renderBullets(box, bullets, againBtn) {
     box.textContent = '';
     const ul = document.createElement('ul');
     ul.className = 'conv-recap';
@@ -103,6 +103,7 @@ export function createConversations({ api, toaster, onLayout }) {
       ul.appendChild(li);
     }
     box.appendChild(ul);
+    if (againBtn) box.appendChild(againBtn);
   }
 
   function renderState(box, text, kind, onRetry, btnText) {
@@ -122,13 +123,23 @@ export function createConversations({ api, toaster, onLayout }) {
   }
 
   /* ---------------- 提炼队列 ---------------- */
-  const queued = new Set(); // `${path}#${index}`，防止同一轮被排两次
+  /* key = `${path}#${index}` → 正在排队的作业。
+     同一轮可能被多次排队（同一份日志导入两次、或者点了重试），
+     这时要把所有等着结果的卡片都挂到同一个作业上，
+     不然后来的那组卡片会永远停在「提炼中…」。 */
+  const jobs = new Map();
 
   function enqueue(job) {
     const key = `${job.path}#${job.index}`;
-    if (queued.has(key)) return;
-    queued.add(key);
-    queue.push(job);
+    const boxes = job.boxes ? job.boxes.slice() : [job.box];
+    const exist = jobs.get(key);
+    if (exist) {
+      exist.boxes.push(...boxes);
+      return;
+    }
+    const task = { path: job.path, name: job.name, index: job.index, boxes };
+    jobs.set(key, task);
+    queue.push(task);
     pump();
   }
 
@@ -138,32 +149,47 @@ export function createConversations({ api, toaster, onLayout }) {
       const job = queue.shift();
       active++;
       runJob(job).finally(() => {
-        queued.delete(`${job.path}#${job.index}`);
+        jobs.delete(`${job.path}#${job.index}`);
         active--;
         pump();
       });
     }
   }
 
+  /** 「重新提炼」按钮：已经保存过的轮次也能再跑一次（会覆盖已存的 recap） */
+  function makeAgainButton(logPath, logName, index, box) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'conv-recap__again';
+    btn.textContent = '重新提炼';
+    btn.title = '已保存到日志旁边的 .recap.md。用当前模型重跑会覆盖它。';
+    btn.addEventListener('click', () => {
+      enqueue({ path: logPath, name: logName, index, box });
+    });
+    return btn;
+  }
+
   async function runJob(job) {
-    const { box } = job;
-    job.done = true;
-    renderState(box, '提炼中…', 'pending');
+    const { path: logPath, name: logName, index } = job;
+    for (const box of job.boxes) renderState(box, '提炼中…', 'pending');
     try {
-      const res = await api.distillRound(job.path, job.index);
-      renderBullets(box, res.bullets);
+      const res = await api.distillRound(logPath, index);
+      for (const box of job.boxes) {
+        renderBullets(box, res.bullets, makeAgainButton(logPath, logName, index, box));
+      }
       consecutiveFails = 0;
-      if (!notified.has(job.path)) {
-        notified.add(job.path);
-        const name = (job.name || '').split('\\').pop().split('/').pop();
-        toaster.show(`recap 已写入 ${name}.recap.md`);
+      if (!notified.has(logPath)) {
+        notified.add(logPath);
+        const nm = (logName || '').split('\\').pop().split('/').pop();
+        toaster.show(`recap 已写入 ${nm}.recap.md`);
       }
     } catch (err) {
       const msg = (err && err.message ? err.message : String(err)).replace(/\s+/g, ' ').slice(0, 160);
-      renderState(box, '提炼失败：' + msg, 'err', () => {
-        job.done = false;
-        enqueue(job);
-      });
+      for (const box of job.boxes) {
+        renderState(box, '提炼失败：' + msg, 'err', () => {
+          enqueue({ path: logPath, name: logName, index, boxes: job.boxes });
+        });
+      }
       consecutiveFails++;
       if (consecutiveFails >= MAX_CONSECUTIVE_FAILS) {
         paused = true;
@@ -194,7 +220,8 @@ export function createConversations({ api, toaster, onLayout }) {
       cards.set(round.index, { card, box, round });
 
       if (round.bullets && round.bullets.length) {
-        renderBullets(box, round.bullets);
+        // 有缓存：直接显示已保存的要点，并给一个「重新提炼」入口
+        renderBullets(box, round.bullets, makeAgainButton(log.path, log.name, round.index, box));
       } else {
         // 没提炼过的轮次给个手动按钮：额度紧的时候可以只提炼想看的几轮
         renderState(box, '尚未提炼', 'idle', () => {

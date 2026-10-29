@@ -198,7 +198,9 @@ async function run(win) {
 
   /* ---- 8. 导入对话：卡片 / 轮次 / 决策 / recap / 缓存 ---- */
   // 用假引擎（不联网、不调真模型），并把假引擎放到纯 ASCII 临时目录，避免中文路径
-  const fakeEngine = path.join(TMP, 'fake-engine.js');
+  // 用 .cjs：临时目录下面可能有 "type":"module" 的 package.json，
+  // 那样 .js 会被 Node 当成 ESM，require 就用不了了
+  const fakeEngine = path.join(TMP, 'fake-engine.cjs');
   fs.copyFileSync(path.join(__dirname, 'fake-engine.js'), fakeEngine);
 
   const origSettings = await win.webContents.executeJavaScript('window.api.getEngineSettings()');
@@ -256,6 +258,19 @@ async function run(win) {
     recapText.includes('recap:1') && recapText.includes('recap:2') && recapText.includes('recap:3'),
     recapText.slice(0, 200));
 
+  /* 假引擎每次被调用都会在自己目录留一行 —— 这是"有没有二次提炼"的硬证据 */
+  const callLog = path.join(TMP, 'engine-calls.log');
+  const engineCalls = () => {
+    try {
+      return fs.readFileSync(callLog, 'utf8').split('\n').filter(Boolean).length;
+    } catch (_) {
+      return 0;
+    }
+  };
+  const callsAfterFirst = engineCalls();
+  check('提炼 3 轮就调了 3 次引擎（不多不少）',
+    callsAfterFirst === 3, `calls=${callsAfterFirst}`);
+
   {
     const img = await win.webContents.capturePage();
     fs.writeFileSync(path.join(OUT, 'conv.png'), img.toPNG());
@@ -277,6 +292,57 @@ async function run(win) {
   check('重新导入直接用缓存（不再调引擎）',
     cached.cards === 3 && cached.bullets.every((n) => n >= 1) && cached.pending === 0,
     JSON.stringify(cached));
+  check('重新导入时引擎一次都没被再叫（真的没有二次提炼）',
+    engineCalls() === callsAfterFirst,
+    `before=${callsAfterFirst} after=${engineCalls()}`);
+
+  /* ---- 9b. 同一份日志同时导入两次：两组卡片都要拿到结果，不能卡在"提炼中" ---- */
+  await win.webContents.executeJavaScript(`(() => {
+    document.querySelectorAll('.conv-group').forEach(g => g.remove());
+    return true;
+  })()`);
+  // 把缓存删掉，逼它重新提炼 —— 这样才会撞上"两次导入同时排队"
+  try { fs.unlinkSync(path.join(TMP, 'demo-session.recap.md')); } catch (_) {}
+  const callsBeforeDup = engineCalls();
+  await win.webContents.executeJavaScript(
+    `Promise.all([
+       window.__app.conversations.openLogByPath(${JSON.stringify(logPath)}),
+       window.__app.conversations.openLogByPath(${JSON.stringify(logPath)}),
+     ]).then(() => true)`
+  );
+  await delay(7000);
+  const dup = await win.webContents.executeJavaScript(`(() => ({
+    groups: document.querySelectorAll('.conv-group').length,
+    cards: document.querySelectorAll('.conv-card').length,
+    withBullets: Array.from(document.querySelectorAll('.conv-card'))
+      .filter(c => c.querySelectorAll('.conv-recap li').length).length,
+    pending: document.querySelectorAll('.conv-recap__state--pending').length,
+  }))()`);
+  check('同一份日志导入两次，两组卡片都拿到 recap（不会卡在"提炼中…"）',
+    dup.groups === 2 && dup.cards === 6 && dup.withBullets === 6 && dup.pending === 0,
+    JSON.stringify(dup));
+  check('同时导入两次也只提炼一轮一次（引擎没被重复调）',
+    engineCalls() - callsBeforeDup === 3,
+    `多调了 ${engineCalls() - callsBeforeDup} 次`);
+
+  /* ---- 9c. 「重新提炼」：已保存的轮次也能重跑（换模型后有用），并覆盖旧的 ---- */
+  const callsBeforeAgain = engineCalls();
+  const again = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const btn = document.querySelector('.conv-recap__again');
+    if (!btn) return { hasBtn: false };
+    btn.click();
+    await sleep(5000);
+    return {
+      hasBtn: true,
+      pending: document.querySelectorAll('.conv-recap__state--pending').length,
+      bullets: document.querySelectorAll('.conv-card')[0].querySelectorAll('.conv-recap li').length,
+    };
+  })()`);
+  check('已保存的轮次有「重新提炼」按钮', again.hasBtn === true, JSON.stringify(again));
+  check('点「重新提炼」会再调一次引擎并覆盖已存的那轮',
+    engineCalls() - callsBeforeAgain === 1 && again.bullets >= 1,
+    `多调了 ${engineCalls() - callsBeforeAgain} 次 · ${JSON.stringify(again)}`);
 
   // 还原提炼引擎设置与「最近导入」清单（别把临时文件留在用户真实设置里）
   await win.webContents.executeJavaScript(

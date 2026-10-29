@@ -90,7 +90,9 @@ async function upsertRound(logPath, index, bullets, meta = {}) {
   return withLock(file, async () => {
     const existing = await readCache(logPath);
     const merged = { ...existing };
-    if (!merged[index]) merged[index] = bullets;
+    // 这一轮以本次提炼结果为准：用户显式点了「重新提炼」时要能覆盖旧的
+    // （避免"切换模型后重跑没反应"）。没被点名的那几轮保持原样。
+    merged[index] = bullets;
     const rounds = Object.keys(merged)
       .map(Number)
       .sort((a, b) => a - b)
