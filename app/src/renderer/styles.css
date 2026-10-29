@@ -429,7 +429,15 @@ body {
   border: 0; outline: none;
   background: transparent;
   padding: 0;
-  font: 13.5px/1.85 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
+  /* 字体栈里必须显式带上中文字体：
+     Windows 上 Chromium 给"等宽"补的中文回退是**宋体**（衬线、字面偏小），
+     跟 Consolas 混排会基线不齐、行距不匀，看起来就是"文字有问题"。
+     拉丁走 Consolas，中文走雅黑/苹方/思源，跟应用别处的正文一致。 */
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Sarasa Mono SC",
+    "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Noto Sans CJK SC",
+    "Source Han Sans SC", monospace;
+  font-size: 13.5px;
+  line-height: 1.85;
   color: var(--ink);
   white-space: pre-wrap;
 }
@@ -499,7 +507,10 @@ body {
 }
 .editor .ProseMirror blockquote p { margin: .4em 0; }
 .editor .ProseMirror code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
+  /* 同上：等宽栈里补上中文字体，别让中文落回宋体 */
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Sarasa Mono SC",
+    "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", "Noto Sans CJK SC",
+    "Source Han Sans SC", monospace;
   font-size: .88em;
   background: rgba(27, 36, 48, .06);
   border: 1px solid rgba(27, 36, 48, .07);

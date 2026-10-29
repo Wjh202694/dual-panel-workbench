@@ -366,6 +366,9 @@ async function run(win) {
 
   /* ---- 13. 中文 txt 显示诊断（只用合成文件，绝不碰用户私人文件） ---- */
   const settingsBefore = await win.webContents.executeJavaScript('window.api.getEngineSettings()');
+  // 把自检窗口提到最前：窗口被完全遮挡时 Chromium 会停掉 rAF，会干扰测量
+  try { win.show(); win.focus(); win.moveTop(); } catch (_) {}
+  await delay(400);
 
   const ZH = [
     '中文纯文本显示测试（合成样本 · 非用户文件）',
@@ -503,6 +506,210 @@ async function run(win) {
   win.setSize(oldSize[0], oldSize[1]);
   await delay(600);
 
+  /* ---- 13e. 行盒度量 + 实际回退字体（为什么中文看起来不对） ---- */
+  const probe = await win.webContents.executeJavaScript(`(() => {
+    const ta = document.querySelector('.docview--txt textarea');
+    const cs = getComputedStyle(ta);
+    const TEXT = ${JSON.stringify(ZH)};
+
+    // (1) 用同款字体造一个探针 div，量每一行实际占多高
+    const d = document.createElement('div');
+    d.style.cssText = 'position:absolute;left:-99999px;top:0;white-space:pre-wrap;padding:0;border:0;width:' + ta.clientWidth + 'px';
+    d.style.fontFamily = cs.fontFamily;
+    d.style.fontSize = cs.fontSize;
+    d.style.lineHeight = cs.lineHeight;
+    d.textContent = TEXT;
+    document.body.appendChild(d);
+    const node = d.firstChild;
+    const lines = TEXT.split('\\n');
+    const lineBoxes = [];
+    let pos = 0;
+    let prevTop = null;
+    for (const L of lines) {
+      const r = document.createRange();
+      r.setStart(node, pos);
+      r.setEnd(node, pos + L.length);
+      const rects = Array.from(r.getClientRects());
+      const top = rects.length ? rects[0].top : null;
+      const h = rects.length ? rects[0].height : null;
+      lineBoxes.push({
+        t: L.slice(0, 12),
+        top: top === null ? null : +top.toFixed(2),
+        h: h === null ? null : +h.toFixed(2),
+        step: prevTop !== null && top !== null ? +(top - prevTop).toFixed(2) : null,
+      });
+      if (top !== null) prevTop = top;
+      pos += L.length + 1;
+    }
+    const probeH = d.getBoundingClientRect().height;
+    d.remove();
+
+    // (2) canvas 量字符墨迹高度，找出中文实际落到哪个字体、画得多大
+    const c = document.createElement('canvas');
+    c.width = 80; c.height = 80;
+    const g = c.getContext('2d');
+    const ink = (family) => {
+      g.clearRect(0, 0, 80, 80);
+      g.font = cs.fontSize + ' ' + family;
+      g.textBaseline = 'alphabetic';
+      g.fillStyle = '#000';
+      g.fillText('中文', 4, 40);
+      const m = g.measureText('中文');
+      const px = g.getImageData(0, 0, 80, 80).data;
+      let sig = 0;
+      for (let i = 3; i < px.length; i += 4) sig = (sig * 31 + px[i]) >>> 0; // 用 alpha 通道做指纹
+      return {
+        width: +m.width.toFixed(3),
+        asc: +m.actualBoundingBoxAscent.toFixed(2),
+        desc: +m.actualBoundingBoxDescent.toFixed(2),
+        fontAsc: +m.fontBoundingBoxAscent.toFixed(2),
+        fontDesc: +m.fontBoundingBoxDescent.toFixed(2),
+        sig,
+      };
+    };
+    const base = ink(cs.fontFamily);
+    const cands = ['monospace', 'Consolas', 'SimSun', 'NSimSun', 'Microsoft YaHei', 'Microsoft YaHei UI',
+      'SimHei', 'KaiTi', 'FangSong', 'DengXian', 'Microsoft JhengHei', 'Noto Sans CJK SC', 'Source Han Sans SC'];
+    const byFont = cands.map((f) => ({ f, ...ink('"' + f + '"') }));
+    const matches = byFont.filter((x) => x.sig === base.sig).map((x) => x.f);
+    const ascii = ink('Consolas');
+
+    return { lineBoxes, probeH, base, ascii, matches, byFont };
+  })()`);
+  console.log('   [13e] 每行行盒 = ' + JSON.stringify(probe.lineBoxes));
+  console.log('   [13e] 探针总高 = ' + probe.probeH);
+  console.log('   [13e] 中文墨迹(当前栈) = ' + JSON.stringify(probe.base));
+  console.log('   [13e] 拉丁墨迹(Consolas) = ' + JSON.stringify(probe.ascii));
+  console.log('   [13e] 与当前栈像素一致的候选字体 = ' + JSON.stringify(probe.matches));
+  console.log('   [13e] 各候选字体度量 = ' + JSON.stringify(probe.byFont));
+
+  // (3) 放大截图，肉眼看中文与拉丁的字形/基线
+  await win.webContents.executeJavaScript('window.__app.workspace.closeDoc()');
+  await delay(300);
+  await win.webContents.executeJavaScript(
+    openMeta(zhPath, '合成中文样本.txt', '.txt', 'text', zhMeta.content, zhMeta.encoding)
+  );
+  await delay(900);
+  await win.webContents.executeJavaScript('window.__app.workspace.closeDoc()');
+  await delay(200);
+  await win.webContents.executeJavaScript(
+    openMeta(zhPath, '合成中文样本.txt', '.txt', 'text', zhMeta.content, zhMeta.encoding)
+  );
+  await delay(900);
+  {
+    const r = await win.webContents.executeJavaScript(`(() => {
+      const ta = document.querySelector('.docview--txt textarea');
+      const b = ta.getBoundingClientRect();
+      return { x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.width), height: Math.min(300, Math.round(b.height)) };
+    })()`);
+    win.webContents.setZoomFactor(2);
+    await delay(700);
+    const shot = await win.webContents.capturePage();
+    fs.writeFileSync(path.join(OUT, 'txt-cn-zoom2.png'), shot.toPNG());
+    win.webContents.setZoomFactor(1);
+    await delay(300);
+    void r;
+  }
+
+  /* ---- 14. autoGrow / rAF 时序：高度到底算出来了没有 ---- */
+  const taState = `(() => {
+    const ta = document.querySelector('.docview--txt textarea');
+    if (!ta) return null;
+    return {
+      styleH: ta.style.height,
+      clientH: ta.clientHeight,
+      scrollH: ta.scrollHeight,
+      vis: document.visibilityState,
+      hidden: document.hidden,
+    };
+  })()`;
+
+  // 14a. 正常可见窗口下，打开后按时间点观察 autoGrow 有没有执行
+  await win.webContents.executeJavaScript('window.__app.workspace.closeDoc()');
+  await delay(400);
+  await win.webContents.executeJavaScript(
+    'window.__raf = { n: 0 }; (function f(){ if (window.__raf.n++ < 2000) requestAnimationFrame(f); })();'
+  );
+  await win.webContents.executeJavaScript(
+    openMeta(zhPath, '合成中文样本.txt', '.txt', 'text', zhMeta.content, zhMeta.encoding)
+  );
+  const timeline = [];
+  for (const step of [0, 100, 200, 500, 1000]) {
+    if (step) await delay(step);
+    const s = await win.webContents.executeJavaScript(taState);
+    timeline.push({ at: step, ...s });
+  }
+  const rafN = await win.webContents.executeJavaScript('window.__raf.n');
+  console.log('   [14a] 打开后时间线 = ' + JSON.stringify(timeline));
+  console.log('   [14a] 期间页面自身 rAF 触发次数 = ' + rafN);
+
+  // 14b. 窗口被隐藏/遮挡时打开文档：rAF 停摆 → autoGrow 不执行
+  await win.webContents.executeJavaScript('window.__app.workspace.closeDoc()');
+  await delay(300);
+  win.hide();
+  await delay(600);
+  await win.webContents.executeJavaScript(
+    openMeta(zhPath, '合成中文样本.txt', '.txt', 'text', zhMeta.content, zhMeta.encoding)
+  );
+  await delay(1200);
+  const hiddenState = await win.webContents.executeJavaScript(taState);
+  console.log('   [14b] 窗口隐藏时打开文档 = ' + JSON.stringify(hiddenState));
+  win.show();
+  await delay(1500);
+  const shownState = await win.webContents.executeJavaScript(taState);
+  console.log('   [14b] 窗口恢复显示后 = ' + JSON.stringify(shownState));
+  {
+    const shot = await win.webContents.capturePage();
+    fs.writeFileSync(path.join(OUT, 'txt-cn-shown-again.png'), shot.toPNG());
+  }
+  check('窗口恢复显示后高度自动补上（autoGrow 未失效）',
+    !!shownState && shownState.scrollH <= shownState.clientH + 1,
+    JSON.stringify({ hiddenState, shownState }));
+
+  // 14c. 手动模拟一次 input 事件（用户敲一下键盘）能不能救回来
+  await win.webContents.executeJavaScript(`(() => {
+    const ta = document.querySelector('.docview--txt textarea');
+    ta.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await delay(400);
+  const afterInput = await win.webContents.executeJavaScript(taState);
+  console.log('   [14c] 手动触发 input 之后 = ' + JSON.stringify(afterInput));
+
+  /* ---- 15. 右上角「切换模型」按键 ---- */
+  const modelBox = await win.webContents.executeJavaScript(`(() => ({
+    buttons: document.querySelectorAll('.topbar__model').length,
+    label: (document.getElementById('model-name') || {}).textContent || '',
+  }))()`);
+  check('顶栏右上角有一个模型切换按键',
+    modelBox.buttons === 1 && !!modelBox.label && modelBox.label !== '…',
+    JSON.stringify(modelBox));
+
+  const switched = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    document.getElementById('btn-model').click();
+    await sleep(250);
+    const items = Array.from(document.querySelectorAll('.modelmenu__item'));
+    const open = !document.getElementById('model-menu').hidden;
+    const before = document.getElementById('model-name').textContent;
+    const target = items.find(e => e.getAttribute('aria-checked') !== 'true');
+    if (target) target.click();
+    await sleep(800);
+    return {
+      open, count: items.length, before,
+      after: document.getElementById('model-name').textContent,
+      closed: document.getElementById('model-menu').hidden,
+      checkedNow: Array.from(document.querySelectorAll('.modelmenu__item'))
+        .filter(e => e.getAttribute('aria-checked') === 'true').length,
+    };
+  })()`);
+  check('点模型按键能展开模型清单（不止一个可选项）',
+    switched.open && switched.count >= 3, JSON.stringify(switched));
+  check('选一个模型后立刻生效（按钮名字变了、菜单收起）',
+    !!switched.after && switched.after !== switched.before && switched.closed,
+    JSON.stringify(switched));
+  check('切换后清单里只有一个是选中态',
+    switched.checkedNow === 1, JSON.stringify(switched));
+
   // 收尾：关掉文档、还原设置
   await win.webContents.executeJavaScript('window.__app.workspace.closeDoc()');
   await delay(300);
@@ -518,6 +725,11 @@ async function run(win) {
 
 app.whenReady().then(async () => {
   fs.mkdirSync(OUT, { recursive: true });
+  // 看门狗：自检卡死时也要退出，别留下占着窗口的僵尸进程
+  setTimeout(() => {
+    console.log('WATCHDOG  自检超时，强制退出');
+    app.exit(2);
+  }, 180000);
   try {
     await delay(2500);
     const win = BrowserWindow.getAllWindows()[0];

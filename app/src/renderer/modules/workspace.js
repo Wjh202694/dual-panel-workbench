@@ -42,19 +42,41 @@ export function createWorkspace({ api, toaster, els }) {
     ta.className = 'editor--text';
     ta.spellcheck = false;
     ta.value = d.original;
-    // 让文本框随内容长高，滚动交给面板统一处理（与 md 编辑区一致）
-    const autoGrow = () => {
+    el.appendChild(ta);
+    editorHost.appendChild(el);
+
+    /* 让 textarea 高度跟着内容长。
+     *
+     * 只在 requestAnimationFrame 里调是不够的：窗口被隐藏/最小化时
+     * rAF 根本不触发，autoGrow 一次都没跑，textarea 停在最小高度，
+     * 而 overflow:hidden 会把多出来的文字**直接裁掉** —— 表现就是
+     * "txt 打开后文字有问题（少了/被截断）"。
+     * 窗口重新显示后也不会自己补上，得敲一下键盘才恢复。
+     *
+     * 所以这里：同步先算一次 + rAF 再算一次 + 窗口恢复可见时再算一次
+     * + 窗口尺寸变了要重算（宽度变了换行点也变了）。
+     */
+    function autoGrow() {
       ta.style.height = 'auto';
-      ta.style.height = ta.scrollHeight + 'px';
-    };
+      const h = ta.scrollHeight;
+      if (h > 0) ta.style.height = h + 'px'; // 隐藏时 scrollHeight 可能取不到，先别写
+    }
+
     ta.addEventListener('input', () => {
       autoGrow();
       onContentChanged(d, ta.value);
     });
-    el.appendChild(ta);
-    editorHost.appendChild(el);
+
+    autoGrow();
     requestAnimationFrame(autoGrow);
-    return { el, editor: null, textarea: ta, autoGrow };
+
+    const onVisible = () => {
+      if (!document.hidden) autoGrow();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('resize', autoGrow);
+
+    return { el, editor: null, textarea: ta, autoGrow, onVisible };
   }
 
   function onContentChanged(d, content) {
@@ -136,10 +158,16 @@ export function createWorkspace({ api, toaster, els }) {
       view: null,
     };
 
-    doc.view = await createView(doc);
+    /* 先把容器显示出来再建视图：视图一创建就要量自己的高度，
+       容器还 hidden（display:none）的话量不到真实高度，
+       txt 视图第一帧会停在最小高度（闪一下只有两行）。 */
     editorHost.hidden = false;
     bottomContent.dataset.filled = '1';
     bottomContent.style.height = '';
+
+    doc.view = await createView(doc);
+    // 建完再补一次：md 编辑器挂载后高度可能变过
+    if (doc.view && doc.view.autoGrow) doc.view.autoGrow();
     hideBanner();
 
     api.watchDocument(meta.path);
@@ -155,6 +183,9 @@ export function createWorkspace({ api, toaster, els }) {
     if (!d) return;
     if (d.view) {
       if (d.view.editor) d.view.editor.destroy();
+      // txt 视图挂了两个全局监听，卸文档时一并摘掉，别越积越多
+      if (d.view.onVisible) document.removeEventListener('visibilitychange', d.view.onVisible);
+      if (d.view.textarea && d.view.autoGrow) window.removeEventListener('resize', d.view.autoGrow);
       d.view.el.remove();
     }
     api.unwatchDocument(d.meta.path);
