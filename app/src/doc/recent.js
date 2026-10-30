@@ -2,15 +2,17 @@
 /**
  * 文档侧的"找得到"：
  *   1. 最近导入过的文档
- *   2. 项目文件夹里的 .md / .txt / 源代码（项目目录来自会话日志里的 cwd）
+ *   2. 项目文件夹里的 .md / .txt / 源代码
  *
  * 跟对话那边同一个思路：不给一个要靠肉眼认的文件框，给一份有名字、有来路的清单。
+ *
+ * 这一层只懂「文档」：项目目录从哪儿来是别人决定的，
+ * 由 main.js 把会话日志里推出来的目录递进来（doc 不反过来依赖 conv）。
  */
 
 const fs = require('fs');
 const path = require('path');
-const { readSettings, writeSettings } = require('../conv/settings');
-const { projectDirs, humanTime } = require('../conv/recent');
+const { readSettings, writeSettings } = require('../settings');
 
 /**
  * 能导入的文件类型。
@@ -45,10 +47,13 @@ function rememberDoc(doc) {
   return next;
 }
 
-/** 项目文件夹里的文档 */
-function docsInProjects() {
+/**
+ * 项目文件夹里的文档
+ * @param {Array<{cwd:string, mtime:number}>} dirs 项目目录（从哪来的由调用方决定）
+ */
+function docsInProjects(dirs) {
   const groups = [];
-  for (const d of projectDirs().slice(0, MAX_DIRS)) {
+  for (const d of (dirs || []).slice(0, MAX_DIRS)) {
     let entries;
     try {
       entries = fs.readdirSync(d.cwd, { withFileTypes: true });
@@ -76,12 +81,15 @@ function docsInProjects() {
   return groups;
 }
 
-/** 给选择器用的完整清单 */
-function listDocCandidates() {
+/**
+ * 给选择器用的完整清单
+ * @param {Array<{cwd:string, mtime:number}>} dirs 项目目录
+ */
+function listDocCandidates(dirs) {
   return {
     recent: recentDocs(),
-    projects: docsInProjects(),
+    projects: docsInProjects(dirs),
   };
 }
 
-module.exports = { recentDocs, rememberDoc, docsInProjects, listDocCandidates, humanTime, DOC_EXT };
+module.exports = { recentDocs, rememberDoc, docsInProjects, listDocCandidates, DOC_EXT };

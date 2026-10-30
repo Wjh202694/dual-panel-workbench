@@ -1,17 +1,22 @@
 'use strict';
 /**
- * 提炼引擎设置（存在 userData/settings.json，不占界面）
+ * 应用设置的存取（存在 userData/settings.json，不占界面）
+ *
+ * 这一层只管「把 JSON 读出来 / 写回去」，
+ * 「什么算合法的设置」在 src/engines.js 里。
+ * 它放在 src/ 下面（不是 conv/ 下面），是因为对话那边和文档那边都要用。
  */
 
 const path = require('path');
 const fs = require('fs');
 const { app } = require('electron');
-const { DEFAULT_SETTINGS, ENGINES } = require('./distill');
+const { DEFAULT_SETTINGS, normalizeSettings } = require('./engines');
 
 function settingsFile() {
   return path.join(app.getPath('userData'), 'settings.json');
 }
 
+/** 读全部设置（缺的补上默认值） */
 function readSettings() {
   try {
     const raw = fs.readFileSync(settingsFile(), 'utf8');
@@ -22,20 +27,13 @@ function readSettings() {
   }
 }
 
+/**
+ * 改一部分设置并写回
+ * @param {Object} patch 要改的字段
+ * @returns {Object} 写完之后的完整设置
+ */
 function writeSettings(patch) {
-  const next = { ...readSettings(), ...(patch || {}) };
-  // 校验引擎合法性
-  if (!ENGINES.some((e) => e.id === next.engine)) next.engine = DEFAULT_SETTINGS.engine;
-  if (!next.model) {
-    const preset = ENGINES.find((e) => e.id === next.engine);
-    next.model = (preset && preset.defaultModel) || '';
-  }
-  // 接口格式只认这两种
-  if (next.apiFormat !== 'anthropic') next.apiFormat = 'openai';
-  next.apiBaseUrl = String(next.apiBaseUrl || '').trim();
-  next.apiKey = String(next.apiKey || '').trim();
-  next.model = String(next.model || '').trim();
-  next.customCommand = String(next.customCommand || '').trim();
+  const next = normalizeSettings({ ...readSettings(), ...(patch || {}) });
   try {
     fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
     fs.writeFileSync(settingsFile(), JSON.stringify(next, null, 2), 'utf8');

@@ -1,32 +1,57 @@
 'use strict';
 /**
  * 对话导入的业务编排：解析 → 渲染素材 → 调用引擎提炼 → 落盘缓存
+ *
+ * 这一层只做编排：读日志、解析、调别的模块。
+ * 具体算法都在别的模块里（解析在 parse-log、提炼在 distill、
+ * 「这一轮改了哪些代码」在 code-diff），这里不重复实现。
  */
 
 const path = require('path');
 const fsp = require('fs/promises');
 const { parseTranscript, buildMaterial } = require('./parse-log');
-const { computeRoundStates, fallbackChanges, diffLines, splitLines } = require('./code-diff');
+const codeDiff = require('./code-diff');
 const distill = require('./distill');
 const cache = require('./cache');
-const { readSettings } = require('./settings');
+const { readSettings } = require('../settings');
+const { readTextFile } = require('../text-file');
 
-async function readLogText(logPath) {
-  const buf = await fsp.readFile(logPath);
-  // 日志基本都是 UTF-8；万一不是，用 decodeBuffer 兜一下
+/**
+ * 日志解析结果的缓存
+ *
+ * 日志可能几十 MB，点一次「code」就重解析一遍纯属浪费。
+ * 用「大小 + 修改时间」当钥匙：文件没动就直接复用上次解析出来的轮次。
+ * 日志被追加（边聊边写）时大小会变，缓存自然失效。
+ */
+const parsedCache = new Map();
+const PARSED_CACHE_MAX = 8;
+
+async function parseLog(logPath) {
+  let st = null;
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+    st = await fsp.stat(logPath);
   } catch (_) {
-    return buf.toString('utf8');
+    /* 读不到就当没有缓存 */
   }
+  const hit = parsedCache.get(logPath);
+  if (hit && st && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit;
+
+  const text = await readTextFile(logPath);
+  const { rounds, cwd } = parseTranscript(text);
+  const entry = { size: st ? st.size : 0, mtimeMs: st ? st.mtimeMs : 0, rounds, cwd };
+
+  if (parsedCache.size >= PARSED_CACHE_MAX) {
+    parsedCache.delete(parsedCache.keys().next().value);
+  }
+  parsedCache.set(logPath, entry);
+  return entry;
 }
 
 /**
  * 读入一个对话日志：切出各轮的「决策」素材，并带上已有的 recap 缓存
  */
 async function loadConversation(logPath) {
-  const text = await readLogText(logPath);
-  const { rounds } = parseTranscript(text);
+  const { rounds } = await parseLog(logPath);
   const recaps = await cache.readCache(logPath);
   return {
     path: logPath,
@@ -58,8 +83,7 @@ function toRound(r, recaps) {
  * @param {number} limit 最多带几轮
  */
 async function loadNewRounds(logPath, afterIndex, limit) {
-  const text = await readLogText(logPath);
-  const { rounds } = parseTranscript(text);
+  const { rounds } = await parseLog(logPath);
   const recaps = await cache.readCache(logPath);
   const from = Number(afterIndex) || 0;
   const max = Math.max(0, Number(limit) || 0);
@@ -76,8 +100,7 @@ async function loadNewRounds(logPath, afterIndex, limit) {
  * 提炼一轮：调引擎 → 拿要点 → 并进缓存文件
  */
 async function distillRound(logPath, index) {
-  const text = await readLogText(logPath);
-  const { rounds } = parseTranscript(text);
+  const { rounds } = await parseLog(logPath);
   const round = rounds.find((r) => r.index === index);
   if (!round) throw new Error(`日志里找不到第 ${index} 轮`);
 
@@ -102,104 +125,15 @@ async function distillRound(logPath, index) {
 /**
  * 某一轮改了哪些代码
  *
- * 行号不是从日志里读来的（日志不记行号），而是把日志里的改动**回放**一遍，
- * 拿到「这一轮之前」和「这一轮之后」两个版本的文件内容，再做行级 diff：
- *  - 删除行的行号 = 它在**旧版本**里是第几行
- *  - 新增行的行号 = 它在**新版本**里是第几行
- * 拿磁盘上那份文件直接算是不行的 —— 它可能已经是好几轮之后的样子。
+ * 这一层只管编排：读日志 → 解析 → 交给 code-diff 去算。
+ * 怎么回放、怎么算行号，见 code-diff.js / code-state.js。
  *
  * @param {string} logPath 日志路径
  * @param {number} index 轮次序号（从 1 开始）
  */
 async function loadRoundCode(logPath, index) {
-  const text = await readLogText(logPath);
-  const { rounds, cwd } = parseTranscript(text);
-  const round = rounds.find((r) => r.index === index);
-  if (!round) throw new Error(`日志里找不到第 ${index} 轮`);
-
-  const projectDir = cwd || '';
-
-  // 这一轮碰过的文件
-  const targets = [];
-  for (const e of round.edits || []) {
-    const f = String(e.file || '');
-    if (f && !targets.includes(f)) targets.push(f);
-  }
-
-  const files = [];
-  for (const file of targets) {
-    // 这个文件在整份日志里的所有改动（跨轮次），按日志顺序
-    const allEdits = [];
-    for (const r of rounds) {
-      for (const e of r.edits || []) {
-        if (String(e.file || '') === file) {
-          allEdits.push({ round: r.index, kind: e.kind, oldText: e.oldText, newText: e.newText });
-        }
-      }
-    }
-
-    const { exists, content } = await readFileIfExists(file);
-    const states = computeRoundStates(allEdits, content);
-    const st = states.get(index);
-
-    const item = {
-      file,
-      rel: relativeTo(projectDir, file),
-      exists,
-      changes: [],
-      beforeLines: null,
-      afterLines: null,
-      approx: false,
-    };
-
-    if (st) {
-      item.beforeLines = splitLines(st.before).length;
-      item.afterLines = splitLines(st.after).length;
-      item.changes = diffLines(st.before, st.after);
-      item.approx = !!st.approx;
-    } else {
-      // 推不出这一轮的内容 → 退回按当前文件估算，并标明是估算
-      item.approx = true;
-      item.changes = fallbackChanges(
-        (round.edits || []).filter((e) => String(e.file || '') === file),
-        content
-      );
-      item.afterLines = splitLines(content).length;
-    }
-
-    files.push(item);
-  }
-
-  return { index, cwd: projectDir, total: files.length, files };
+  const { rounds, cwd } = await parseLog(logPath);
+  return codeDiff.roundCode({ rounds, cwd, index });
 }
 
-/** 读磁盘上的文件；读不到就当它不存在（文件被删了 / 路径变了） */
-async function readFileIfExists(file) {
-  try {
-    const buf = await fsp.readFile(file);
-    let content;
-    try {
-      content = new TextDecoder('utf-8', { fatal: true }).decode(buf);
-    } catch (_) {
-      content = buf.toString('utf8');
-    }
-    return { exists: true, content };
-  } catch (_) {
-    return { exists: false, content: '' };
-  }
-}
-
-/** 把绝对路径换成相对项目目录的路径；算不出来就还是绝对路径 */
-function relativeTo(cwd, file) {
-  if (!cwd || !file) return file || '';
-  const base = String(cwd).replace(/[\\/]+$/, '');
-  if (!base) return file;
-  const norm = (s) => (process.platform === 'win32' ? s.toLowerCase() : s);
-  if (norm(file) === norm(base)) return path.basename(file);
-  for (const sep of ['/', '\\']) {
-    if (norm(file).startsWith(norm(base + sep))) return file.slice(base.length + 1);
-  }
-  return file;
-}
-
-module.exports = { loadConversation, loadNewRounds, distillRound, loadRoundCode, readLogText };
+module.exports = { loadConversation, loadNewRounds, distillRound, loadRoundCode };

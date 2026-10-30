@@ -142,7 +142,7 @@ export function createWorkspace({ api, toaster, els }) {
 
   let codeView = null;
 
-  function codeLine(sign, l) {
+  function codeLine(sign, l, approx) {
     const row = document.createElement('div');
     row.className = 'codeview__line codeview__line--' + (sign === '+' ? 'add' : 'del');
     const no = document.createElement('span');
@@ -150,7 +150,9 @@ export function createWorkspace({ api, toaster, els }) {
     no.textContent = l && l.line != null ? String(l.line) : '';
     // 行号来自各自的版本：删除行是旧文件里的行号，新增行是新文件里的行号
     if (l && l.line != null) {
-      no.title = (sign === '+' ? '改后第 ' : '改前第 ') + l.line + ' 行';
+      no.title = approx
+        ? '当前文件里第 ' + l.line + ' 行（这一轮之前的样子推不出来，只能按现在的文件估）'
+        : (sign === '+' ? '改后第 ' : '改前第 ') + l.line + ' 行';
     }
     const tx = document.createElement('span');
     tx.className = 'codeview__text';
@@ -208,8 +210,8 @@ export function createWorkspace({ api, toaster, els }) {
         );
         const tag = document.createElement('span');
         tag.className = 'codeview__tag codeview__tag--warn';
-        tag.textContent = anyNull ? '这一轮的行号算不出来' : '行号按当前文件估算';
-        tag.title = '这一轮之前的内容已经推不出来了（文件后来被整个改写过），行号只能按现在的文件估';
+        tag.textContent = anyNull ? '这一轮的行号算不出来' : '行号是估的';
+        tag.title = f.note || '这一轮之前的内容推不出来，行号只能按现在的文件估';
         path.appendChild(tag);
       }
       block.appendChild(path);
@@ -217,8 +219,8 @@ export function createWorkspace({ api, toaster, els }) {
       for (const ch of f.changes || []) {
         const list = document.createElement('div');
         list.className = 'codeview__lines';
-        for (const l of ch.removed || []) list.appendChild(codeLine('-', l));
-        for (const l of ch.added || []) list.appendChild(codeLine('+', l));
+        for (const l of ch.removed || []) list.appendChild(codeLine('-', l, f.approx));
+        for (const l of ch.added || []) list.appendChild(codeLine('+', l, f.approx));
         block.appendChild(list);
       }
       el.appendChild(block);

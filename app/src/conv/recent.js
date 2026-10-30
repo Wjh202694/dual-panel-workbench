@@ -148,7 +148,12 @@ function scanSessions(limit) {
   });
 }
 
-/** 已知会话里出现过的项目目录（用来找项目文档） */
+/**
+ * 已知会话里出现过的项目目录（用来找项目文档）
+ *
+ * 注意：这个能力属于「对话这边」。文档那边要用它，
+ * 由 main.js 把结果递过去（doc/recent.js 不反过来依赖这里）。
+ */
 function projectDirs() {
   const out = new Map(); // cwd -> {cwd, mtime}
   for (const s of listSessions(MAX_ITEMS)) {
@@ -159,28 +164,4 @@ function projectDirs() {
   return Array.from(out.values()).sort((a, b) => b.mtime - a.mtime);
 }
 
-/** 把时间说成人话 */
-function humanTime(ms) {
-  if (!ms) return '';
-  const diff = Date.now() - ms;
-  const min = Math.floor(diff / 60000);
-  if (min < 1) return '刚刚';
-  if (min < 60) return `${min} 分钟前`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} 小时前`;
-  const day = Math.floor(hr / 24);
-  if (day === 1) return '昨天';
-  if (day < 8) return `${day} 天前`;
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-/** 把大小说成人话 */
-function humanSize(n) {
-  if (!n) return '';
-  if (n < 1024) return n + ' B';
-  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
-  return (n / 1024 / 1024).toFixed(1) + ' MB';
-}
-
-module.exports = { listSessions, projectDirs, projectsRoot, humanTime, humanSize };
+module.exports = { listSessions, projectDirs, projectsRoot };

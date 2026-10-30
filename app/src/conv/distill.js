@@ -7,24 +7,7 @@
  */
 
 const { spawn } = require('child_process');
-
-/** 可选引擎 */
-const ENGINES = [
-  { id: 'opencode', label: 'opencode（推荐 · 免费模型）', defaultModel: 'magpie/auto/beam-free' },
-  { id: 'claude', label: 'Claude Code CLI', defaultModel: '' },
-  { id: 'custom', label: '自定义命令（从 stdin 读提示词）', defaultModel: '' },
-  { id: 'api', label: 'API 调用（OpenAI 兼容 / Anthropic）', defaultModel: '' },
-];
-
-const DEFAULT_SETTINGS = {
-  engine: 'opencode',
-  model: 'magpie/auto/beam-free',
-  customCommand: '',
-  apiBaseUrl: '',
-  apiKey: '',
-  apiFormat: 'openai', // 'openai' | 'anthropic'
-  timeoutMs: 180000,
-};
+const { ENGINES, DEFAULT_SETTINGS } = require('../engines');
 
 /**
  * 校验 API 配置。格式不对就抛人话错误，让卡片上能直接看到原因。
@@ -324,8 +307,6 @@ function buildPrompt(round, material) {
 }
 
 module.exports = {
-  ENGINES,
-  DEFAULT_SETTINGS,
   buildCommand,
   runEngine,
   runApi,

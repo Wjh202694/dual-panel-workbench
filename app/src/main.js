@@ -12,7 +12,9 @@ const cache = require('./conv/cache');
 const distill = require('./conv/distill');
 const recent = require('./conv/recent');
 const docRecent = require('./doc/recent');
-const { readSettings, writeSettings } = require('./conv/settings');
+const { readSettings, writeSettings } = require('./settings');
+const { ENGINES } = require('./engines');
+const { humanTime, humanSize } = require('./format');
 const { MODEL_PRESETS, shortLabel } = require('./conv/models');
 
 /**
@@ -336,7 +338,7 @@ ipcMain.handle('conv:settings:set', async (_e, patch) => {
   return next;
 });
 
-ipcMain.handle('conv:engines', async () => distill.ENGINES);
+ipcMain.handle('conv:engines', async () => ENGINES);
 
 ipcMain.handle('conv:models', async () => MODEL_PRESETS);
 
@@ -353,7 +355,7 @@ ipcMain.handle('engine:open', async () => {
 ipcMain.handle('engine:test', async (_e, patch) => {
   const base = readSettings();
   const cfg = { ...base, ...(patch || {}) };
-  if (!distill.ENGINES.some((e) => e.id === cfg.engine)) {
+  if (!ENGINES.some((e) => e.id === cfg.engine)) {
     throw new Error('引擎不对');
   }
   cfg.model = String(cfg.model || '').trim();
@@ -441,7 +443,7 @@ function buildPickerData(kind) {
                 path: s.path,
                 title: s.title || (s.firstPrompt ? s.firstPrompt.slice(0, 36) + '…' : s.file),
                 subtitle: s.cwd || s.project,
-                meta: `${recent.humanTime(s.mtime)} · ${recent.humanSize(s.size)}`,
+                meta: `${humanTime(s.mtime)} · ${humanSize(s.size)}`,
                 action: '导入',
               })),
             },
@@ -450,8 +452,8 @@ function buildPickerData(kind) {
     };
   }
 
-  // 文档
-  const cands = docRecent.listDocCandidates();
+  // 文档：项目目录来自会话日志 —— 由这一层把两边的能力接起来
+  const cands = docRecent.listDocCandidates(recent.projectDirs());
   const groups = [];
   if (cands.recent.length) {
     groups.push({
@@ -460,7 +462,7 @@ function buildPickerData(kind) {
         path: d.path,
         title: d.name,
         subtitle: path.dirname(d.path),
-        meta: recent.humanTime(d.at),
+        meta: humanTime(d.at),
         action: '打开',
       })),
     });
@@ -472,7 +474,7 @@ function buildPickerData(kind) {
         path: i.path,
         title: i.name,
         subtitle: '',
-        meta: recent.humanTime(i.mtime),
+        meta: humanTime(i.mtime),
         action: '打开',
       })),
     });
@@ -601,7 +603,7 @@ function sendMenu(action) {
 function buildMenu() {
   const isMac = process.platform === 'darwin';
   const cfg = readSettings();
-  const engineItems = distill.ENGINES.map((e) => ({
+  const engineItems = ENGINES.map((e) => ({
     label: e.label,
     type: 'radio',
     checked: cfg.engine === e.id,
