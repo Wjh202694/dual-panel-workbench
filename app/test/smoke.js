@@ -9,7 +9,7 @@ const path = require('path');
 const os = require('os');
 const iconv = require('iconv-lite');
 
-const { writeFixture, appendRounds, appendCodeRound } = require('./fixture-log');
+const { writeFixture, appendRounds, appendCodeRound, appendEditRound } = require('./fixture-log');
 
 const OUT = path.join(__dirname, 'out');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'docsmoke-'));
@@ -525,11 +525,15 @@ async function run(win) {
     const view = document.querySelector('.codeview');
     const add = view ? view.querySelectorAll('.codeview__line--add') : [];
     const del = view ? view.querySelectorAll('.codeview__line--del') : [];
+    const noOf = (list) => Array.from(list).map(e => (e.querySelector('.codeview__no') || {}).textContent || '');
     return {
       shown: !!view,
       path: view ? (view.querySelector('.codeview__path') || {}).textContent || '' : '',
+      meta: view ? (view.querySelector('.codeview__meta') || {}).textContent || '' : '',
       addCount: add.length,
       delCount: del.length,
+      addLines: noOf(add),
+      delLines: noOf(del),
       firstAddLine: add[0] ? (add[0].querySelector('.codeview__no') || {}).textContent || '' : '',
       texts: Array.from(view ? view.querySelectorAll('.codeview__text') : []).map(e => e.textContent),
       btnLabel: btn.textContent.trim(),
@@ -537,14 +541,70 @@ async function run(win) {
   })()`);
   check('点「code」之后代码改动显示在下方那块地方',
     clicked.shown === true && /demo-code\.ts/.test(clicked.path), JSON.stringify(clicked));
-  check('显示了新增和删除的行，还带行号',
-    clicked.addCount === 3 && clicked.delCount === 1 && clicked.firstAddLine === '1',
+  check('新增的行带的是源文件里的真实行号',
+    clicked.addCount === 2 && clicked.delCount === 0 &&
+    clicked.addLines.join(',') === '1,2',
     JSON.stringify(clicked));
+  check('标出这一轮之前 / 之后的文件行数',
+    /改前 0 行/.test(clicked.meta) && /改后 2 行/.test(clicked.meta),
+    JSON.stringify(clicked.meta));
   check('改动内容对得上',
-    clicked.texts.indexOf('const b = 3;') >= 0 && clicked.texts.indexOf('const a = 1;') >= 0,
+    clicked.texts.indexOf('const b = 3;') >= 0 && clicked.texts.indexOf('const a = 2;') >= 0,
     JSON.stringify(clicked.texts));
 
+  /* ---- 9g. 改的是本来就存在的文件：行号要来自「那会儿」的文件 ---- */
+  // 磁盘上的内容 = 这一轮改完之后的样子（5 行 → 7 行）
+  const existFile = path.join(TMP, 'demo-existing.ts');
+  fs.writeFileSync(
+    existFile,
+    'const a = 1;\nconst b = 2;\nconst c = 30;\nconst c2 = 31;\nconst c3 = 32;\nconst d = 4;\nconst e = 5;\n',
+    'utf8'
+  );
+  appendEditRound(
+    logPath,
+    existFile,
+    'const c = 3;',
+    'const c = 30;\nconst c2 = 31;\nconst c3 = 32;'
+  );
+  await win.webContents.executeJavaScript(`window.__app.conversations.refresh()`);
+  await delay(2500);
+
+  const existView = await win.webContents.executeJavaScript(`(async () => {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    const card = document.querySelector('.conv-card:last-child');
+    const btn = card ? card.querySelector('.conv-sec--code .conv-sec__toggle') : null;
+    if (!btn) return { noBtn: true };
+    btn.click();
+    await sleep(2500);
+    const view = document.querySelector('.codeview');
+    const add = view ? view.querySelectorAll('.codeview__line--add') : [];
+    const del = view ? view.querySelectorAll('.codeview__line--del') : [];
+    const noOf = (list) => Array.from(list).map(e => (e.querySelector('.codeview__no') || {}).textContent || '');
+    const txOf = (sel) => Array.from(view ? view.querySelectorAll(sel) : []).map(e => e.textContent);
+    return {
+      path: view ? (view.querySelector('.codeview__path') || {}).textContent || '' : '',
+      meta: view ? (view.querySelector('.codeview__meta') || {}).textContent || '' : '',
+      addLines: noOf(add),
+      delLines: noOf(del),
+      addTexts: txOf('.codeview__line--add .codeview__text'),
+      delTexts: txOf('.codeview__line--del .codeview__text'),
+    };
+  })()`);
+  check('改已有文件时，删除行是旧文件的行号、新增行是新文件的行号',
+    existView.delLines.join(',') === '3' && existView.addLines.join(',') === '3,4,5',
+    JSON.stringify(existView));
+  check('删除的那一行内容对得上',
+    existView.delTexts.join('|') === 'const c = 3;' &&
+      existView.addTexts.join('|') === 'const c = 30;|const c2 = 31;|const c3 = 32;',
+    JSON.stringify(existView));
+  check('标出这一轮之前 5 行、之后 7 行',
+    /改前 5 行/.test(existView.meta) && /改后 7 行/.test(existView.meta),
+    JSON.stringify(existView.meta));
+
   {
+    // 窗口被完全遮挡时 Chromium 会停掉合成，截出来的是旧画面 —— 先把它提到最前
+    try { win.show(); win.focus(); win.moveTop(); } catch (_) {}
+    await delay(600);
     const shot = await win.webContents.capturePage();
     fs.writeFileSync(path.join(OUT, 'code.png'), shot.toPNG());
   }

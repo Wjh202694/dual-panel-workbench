@@ -536,6 +536,17 @@ body {
   border-radius: 6px;
   padding: 0 6px;
 }
+.codeview__tag--warn {
+  color: #8a5a00;
+  border-color: #e2c48a;
+  background: #fdf6e6;
+}
+.codeview__meta {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+}
 .codeview__lines { white-space: pre; overflow-x: auto; }
 .codeview__line { display: flex; gap: 10px; padding: 0 4px; }
 .codeview__no {

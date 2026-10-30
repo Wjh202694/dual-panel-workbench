@@ -8,7 +8,7 @@
     "watch": "esbuild src/renderer/renderer.js --bundle --outfile=src/renderer/bundle.js --format=iife --platform=browser --target=chrome120 --loader:.css=css --watch",
     "start": "npm run build && electron .",
     "dev": "npm run build && electron .",
-    "test": "electron test/smoke.js"
+    "test": "npm run build && electron test/smoke.js"
   },
   "author": "",
   "license": "MIT",

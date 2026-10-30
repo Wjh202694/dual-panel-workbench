@@ -209,4 +209,42 @@ function appendCodeRound(logPath, codeFile, writeContent) {
   return logPath;
 }
 
-module.exports = { FIXTURE, writeFixture, appendRounds, appendCodeRound };
+/**
+ * 追加一轮「只改了一处」的对话：一个 Edit 工具调用。
+ *
+ * 用来验证行号：改的是**本来就存在**的文件，
+ * 于是「这一轮之前」的文件内容可以倒着撤出来，算出真实的行号。
+ */
+function appendEditRound(logPath, codeFile, oldString, newString, prompt) {
+  const fs = require('fs');
+  const recs = [
+    {
+      type: 'user',
+      origin: { kind: 'human' },
+      message: { role: 'user', content: prompt || '把这一处改一下' },
+    },
+    {
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'e1',
+            name: 'Edit',
+            input: {
+              file_path: codeFile,
+              old_string: oldString,
+              new_string: newString,
+            },
+          },
+          { type: 'text', text: '改完了。' },
+        ],
+      },
+    },
+  ];
+  fs.appendFileSync(logPath, recs.map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8');
+  return logPath;
+}
+
+module.exports = { FIXTURE, writeFixture, appendRounds, appendCodeRound, appendEditRound };

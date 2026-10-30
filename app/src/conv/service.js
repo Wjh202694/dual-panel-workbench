@@ -6,6 +6,7 @@
 const path = require('path');
 const fsp = require('fs/promises');
 const { parseTranscript, buildMaterial } = require('./parse-log');
+const { computeRoundStates, fallbackChanges, diffLines, splitLines } = require('./code-diff');
 const distill = require('./distill');
 const cache = require('./cache');
 const { readSettings } = require('./settings');
@@ -101,8 +102,11 @@ async function distillRound(logPath, index) {
 /**
  * 某一轮改了哪些代码
  *
- * 日志里记的是「改动的文本」，行号要拿现在的磁盘内容去对：
- * 找到 newText 第一次出现的位置 → 起始行号；找不到就留空（null = 不知道）。
+ * 行号不是从日志里读来的（日志不记行号），而是把日志里的改动**回放**一遍，
+ * 拿到「这一轮之前」和「这一轮之后」两个版本的文件内容，再做行级 diff：
+ *  - 删除行的行号 = 它在**旧版本**里是第几行
+ *  - 新增行的行号 = 它在**新版本**里是第几行
+ * 拿磁盘上那份文件直接算是不行的 —— 它可能已经是好几轮之后的样子。
  *
  * @param {string} logPath 日志路径
  * @param {number} index 轮次序号（从 1 开始）
@@ -114,32 +118,58 @@ async function loadRoundCode(logPath, index) {
   if (!round) throw new Error(`日志里找不到第 ${index} 轮`);
 
   const projectDir = cwd || '';
-  const edits = round.edits || [];
-  if (!edits.length) return { index, cwd: projectDir, total: 0, files: [] };
 
-  // 同一个文件只读一次盘；按文件分组，多条改动合成一个文件项
-  const byFile = new Map();
-  const contentCache = new Map();
-
-  for (const e of edits) {
-    const file = String(e.file || '');
-    if (!file) continue;
-    if (!byFile.has(file)) {
-      byFile.set(file, {
-        file,
-        rel: relativeTo(projectDir, file),
-        exists: false,
-        changes: [],
-      });
-    }
-    if (!contentCache.has(file)) contentCache.set(file, await readFileIfExists(file));
-    const { exists, content } = contentCache.get(file);
-    const item = byFile.get(file);
-    item.exists = exists;
-    item.changes.push(buildChange(e, content));
+  // 这一轮碰过的文件
+  const targets = [];
+  for (const e of round.edits || []) {
+    const f = String(e.file || '');
+    if (f && !targets.includes(f)) targets.push(f);
   }
 
-  const files = Array.from(byFile.values());
+  const files = [];
+  for (const file of targets) {
+    // 这个文件在整份日志里的所有改动（跨轮次），按日志顺序
+    const allEdits = [];
+    for (const r of rounds) {
+      for (const e of r.edits || []) {
+        if (String(e.file || '') === file) {
+          allEdits.push({ round: r.index, kind: e.kind, oldText: e.oldText, newText: e.newText });
+        }
+      }
+    }
+
+    const { exists, content } = await readFileIfExists(file);
+    const states = computeRoundStates(allEdits, content);
+    const st = states.get(index);
+
+    const item = {
+      file,
+      rel: relativeTo(projectDir, file),
+      exists,
+      changes: [],
+      beforeLines: null,
+      afterLines: null,
+      approx: false,
+    };
+
+    if (st) {
+      item.beforeLines = splitLines(st.before).length;
+      item.afterLines = splitLines(st.after).length;
+      item.changes = diffLines(st.before, st.after);
+      item.approx = !!st.approx;
+    } else {
+      // 推不出这一轮的内容 → 退回按当前文件估算，并标明是估算
+      item.approx = true;
+      item.changes = fallbackChanges(
+        (round.edits || []).filter((e) => String(e.file || '') === file),
+        content
+      );
+      item.afterLines = splitLines(content).length;
+    }
+
+    files.push(item);
+  }
+
   return { index, cwd: projectDir, total: files.length, files };
 }
 
@@ -170,63 +200,6 @@ function relativeTo(cwd, file) {
     if (norm(file).startsWith(norm(base + sep))) return file.slice(base.length + 1);
   }
   return file;
-}
-
-/**
- * 文本拆行：按换行切，缩进原样留着，只去掉行尾空白；
- * 末尾多出来的换行不算一行。
- */
-function splitLines(text) {
-  const lines = String(text == null ? '' : text).split(/\r?\n/).map((l) => l.replace(/[ \t]+$/, ''));
-  while (lines.length && lines[lines.length - 1] === '') lines.pop();
-  return lines;
-}
-
-/** 在文件内容里找 newText 第一次出现的行号（1 起）；找不到返回 null */
-function findStartLine(content, needle) {
-  if (!needle) return null;
-  const idx = content.indexOf(needle);
-  if (idx < 0) return null;
-  let line = 1;
-  for (let i = 0; i < idx; i++) {
-    if (content[i] === '\n') line++;
-  }
-  return line;
-}
-
-/** 一条改动 → { kind, added:[{line,text}], removed:[{line,text}] } */
-function buildChange(edit, currentContent) {
-  const kind = edit.kind;
-
-  if (kind === 'write') {
-    // 整个文件都是新内容，行号天然是 1..n
-    const lines = splitLines(edit.newText);
-    return {
-      kind,
-      added: lines.map((t, i) => ({ line: i + 1, text: t })),
-      removed: [],
-    };
-  }
-
-  if (kind === 'notebook') {
-    // notebook 的行号对不上源码，给 null
-    const lines = splitLines(edit.newText);
-    return {
-      kind,
-      added: lines.map((t) => ({ line: null, text: t })),
-      removed: [],
-    };
-  }
-
-  // edit：新增块在现在的文件里第几行
-  const addedLines = splitLines(edit.newText);
-  const removedLines = splitLines(edit.oldText);
-  const start = findStartLine(currentContent, edit.newText);
-  return {
-    kind: 'edit',
-    added: addedLines.map((t, i) => ({ line: start === null ? null : start + i, text: t })),
-    removed: removedLines.map((t, i) => ({ line: start === null ? null : start + i, text: t })),
-  };
 }
 
 module.exports = { loadConversation, loadNewRounds, distillRound, loadRoundCode, readLogText };
